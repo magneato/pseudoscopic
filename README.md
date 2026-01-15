@@ -26,11 +26,11 @@ Pseudoscopic exposes NVIDIA Tesla/Datacenter GPU VRAM as CPU-addressable memory 
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        CPU Address Space                         │
+│                        CPU Address Space                        │
 ├─────────────────────────────────────────────────────────────────┤
 │   System RAM    │         ZONE_DEVICE (GPU VRAM)                │
 │   (DDR4/DDR5)   │         via PCIe BAR1 + HMM                   │
-│                 │                                                │
+│                 │                                               │
 │   [========]    │   [================================]          │
 │     64 GB       │              16 GB (P100)                     │
 │                 │              24 GB (P40)                      │
