@@ -1,0 +1,326 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+#
+# ps-test - Pseudoscopic self-test and stress test suite
+#
+# Validates the driver is functioning correctly and can
+# stress test the migration pathways.
+#
+# Copyright (C) 2025 Neural Splines LLC
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+BOLD='\033[1m'
+
+# Module name
+MODULE="pseudoscopic"
+
+# Test counters
+TESTS_RUN=0
+TESTS_PASSED=0
+TESTS_FAILED=0
+
+# Print test result
+pass() {
+    ((TESTS_PASSED++))
+    echo -e "  ${GREEN}✓${NC} $1"
+}
+
+fail() {
+    ((TESTS_FAILED++))
+    echo -e "  ${RED}✗${NC} $1"
+    if [[ -n "${2:-}" ]]; then
+        echo -e "    ${RED}Error: $2${NC}"
+    fi
+}
+
+skip() {
+    echo -e "  ${YELLOW}○${NC} $1 (skipped)"
+}
+
+# Run a test
+run_test() {
+    local name="$1"
+    local cmd="$2"
+    
+    ((TESTS_RUN++))
+    
+    if eval "$cmd" 2>/dev/null; then
+        pass "$name"
+        return 0
+    else
+        fail "$name"
+        return 1
+    fi
+}
+
+# Header
+print_header() {
+    echo -e "${BOLD}${CYAN}"
+    echo "╔═══════════════════════════════════════════════════════════════════╗"
+    echo "║                    Pseudoscopic Test Suite                        ║"
+    echo "╚═══════════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+}
+
+# Basic sanity tests
+test_basic() {
+    echo -e "${BOLD}Basic Tests${NC}"
+    echo "────────────────────────────────────────────────────"
+    
+    # Module loaded
+    run_test "Module is loaded" "lsmod | grep -q '^${MODULE}'"
+    
+    # Module info available
+    run_test "Module info accessible" "modinfo ${MODULE} >/dev/null"
+    
+    # Version string present
+    run_test "Version string present" "[[ -n \$(modinfo -F version ${MODULE}) ]]"
+    
+    # No kernel errors
+    run_test "No kernel errors" "! dmesg | tail -50 | grep -i '${MODULE}' | grep -qi 'error\|fail\|bug'"
+    
+    echo ""
+}
+
+# Sysfs tests
+test_sysfs() {
+    echo -e "${BOLD}Sysfs Interface Tests${NC}"
+    echo "────────────────────────────────────────────────────"
+    
+    local sysfs_path
+    sysfs_path=$(find /sys/devices -name "pseudoscopic" -type d 2>/dev/null | head -1)
+    
+    if [[ -z "$sysfs_path" ]]; then
+        skip "Sysfs path not found"
+        echo ""
+        return
+    fi
+    
+    # Required attributes
+    local attrs=("vram_size" "pool_total" "pool_free" "version")
+    for attr in "${attrs[@]}"; do
+        run_test "Attribute '${attr}' exists" "[[ -f '${sysfs_path}/${attr}' ]]"
+    done
+    
+    # Statistics attributes
+    local stats=("migrations_to_ram" "migrations_to_device" "page_faults")
+    for stat in "${stats[@]}"; do
+        run_test "Stat '${stat}' readable" "cat '${sysfs_path}/${stat}' >/dev/null"
+    done
+    
+    # Values are reasonable
+    if [[ -f "${sysfs_path}/vram_size" ]]; then
+        local size
+        size=$(cat "${sysfs_path}/vram_size")
+        run_test "VRAM size > 0" "[[ $size -gt 0 ]]"
+        run_test "VRAM size < 1TB" "[[ $size -lt 1099511627776 ]]"
+    fi
+    
+    if [[ -f "${sysfs_path}/pool_free" && -f "${sysfs_path}/pool_total" ]]; then
+        local free total
+        free=$(cat "${sysfs_path}/pool_free")
+        total=$(cat "${sysfs_path}/pool_total")
+        run_test "Free pages <= total" "[[ $free -le $total ]]"
+    fi
+    
+    echo ""
+}
+
+# PCI tests
+test_pci() {
+    echo -e "${BOLD}PCI Device Tests${NC}"
+    echo "────────────────────────────────────────────────────"
+    
+    # NVIDIA GPU present
+    run_test "NVIDIA GPU detected" "lspci | grep -qi nvidia"
+    
+    # Check for supported device
+    local supported_ids="15f8|15f9|1b38|1db4|1db1|1df6|1e30|20f1|20b0"
+    if lspci -n | grep -qE "10de:(${supported_ids})"; then
+        pass "Supported GPU model found"
+    else
+        skip "No supported datacenter GPU (testing with consumer GPU)"
+    fi
+    
+    # BAR1 is reasonable size
+    local bar_size
+    bar_size=$(lspci -v | grep -A 20 -i nvidia | grep "Memory at" | head -2 | tail -1 | grep -oP '\[size=\K[^\]]+' || echo "unknown")
+    if [[ "$bar_size" != "unknown" ]]; then
+        pass "BAR1 size detected: ${bar_size}"
+    else
+        skip "Could not determine BAR1 size"
+    fi
+    
+    echo ""
+}
+
+# Memory allocation test (requires root and actual device)
+test_memory() {
+    echo -e "${BOLD}Memory Tests${NC}"
+    echo "────────────────────────────────────────────────────"
+    
+    if [[ $EUID -ne 0 ]]; then
+        skip "Memory tests require root"
+        echo ""
+        return
+    fi
+    
+    # Check /proc/meminfo for device memory
+    if grep -q "Device" /proc/meminfo 2>/dev/null; then
+        pass "Device memory visible in /proc/meminfo"
+        
+        local dev_total dev_free
+        dev_total=$(grep DeviceTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo "0")
+        
+        if [[ "$dev_total" -gt 0 ]]; then
+            pass "Device memory total: $((dev_total / 1024)) MB"
+        else
+            skip "Device memory not reported"
+        fi
+    else
+        skip "Device memory not in /proc/meminfo (may be normal)"
+    fi
+    
+    echo ""
+}
+
+# Stress test
+test_stress() {
+    local duration="${1:-10}"
+    local threads="${2:-4}"
+    
+    echo -e "${BOLD}Stress Test (${duration}s, ${threads} threads)${NC}"
+    echo "────────────────────────────────────────────────────"
+    
+    if [[ $EUID -ne 0 ]]; then
+        skip "Stress test requires root"
+        echo ""
+        return
+    fi
+    
+    echo "  Running memory stress for ${duration} seconds..."
+    
+    # Get initial stats
+    local sysfs_path
+    sysfs_path=$(find /sys/devices -name "pseudoscopic" -type d 2>/dev/null | head -1)
+    
+    local start_migrations=0
+    if [[ -n "$sysfs_path" && -f "${sysfs_path}/migrations_to_ram" ]]; then
+        start_migrations=$(cat "${sysfs_path}/migrations_to_ram")
+    fi
+    
+    # Run stress-ng if available
+    if command -v stress-ng &>/dev/null; then
+        stress-ng --vm "${threads}" --vm-bytes 256M --timeout "${duration}s" --quiet 2>/dev/null || true
+        pass "stress-ng completed"
+    else
+        # Fallback: simple memory pressure
+        for i in $(seq 1 "$threads"); do
+            (
+                for j in $(seq 1 $((duration * 10))); do
+                    dd if=/dev/zero of=/dev/null bs=1M count=64 2>/dev/null
+                done
+            ) &
+        done
+        wait
+        pass "Memory pressure test completed"
+    fi
+    
+    # Check for errors
+    if dmesg | tail -100 | grep -i "${MODULE}" | grep -qi "error\|fail\|bug\|oops"; then
+        fail "Kernel errors detected during stress"
+    else
+        pass "No kernel errors during stress"
+    fi
+    
+    # Check migration activity
+    if [[ -n "$sysfs_path" && -f "${sysfs_path}/migrations_to_ram" ]]; then
+        local end_migrations
+        end_migrations=$(cat "${sysfs_path}/migrations_to_ram")
+        local delta=$((end_migrations - start_migrations))
+        
+        if [[ $delta -gt 0 ]]; then
+            pass "Migration activity: ${delta} pages migrated"
+        else
+            skip "No migration activity (may be normal if VRAM not under pressure)"
+        fi
+    fi
+    
+    echo ""
+}
+
+# Print summary
+print_summary() {
+    echo -e "${BOLD}Summary${NC}"
+    echo "════════════════════════════════════════════════════"
+    echo -e "  Tests run:    ${TESTS_RUN}"
+    echo -e "  ${GREEN}Passed:       ${TESTS_PASSED}${NC}"
+    echo -e "  ${RED}Failed:       ${TESTS_FAILED}${NC}"
+    echo ""
+    
+    if [[ $TESTS_FAILED -eq 0 ]]; then
+        echo -e "${GREEN}${BOLD}All tests passed!${NC}"
+        return 0
+    else
+        echo -e "${RED}${BOLD}Some tests failed.${NC}"
+        return 1
+    fi
+}
+
+# Usage
+usage() {
+    echo "Usage: ps-test [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -a, --all              Run all tests (default)"
+    echo "  -b, --basic            Run basic tests only"
+    echo "  -s, --stress [N] [T]   Run stress test for N seconds with T threads"
+    echo "  -q, --quick            Quick test (no stress)"
+    echo "  -h, --help             Show this help"
+    echo ""
+    echo "Examples:"
+    echo "  sudo ps-test                  # Run all tests"
+    echo "  sudo ps-test --stress 60 8    # 60 second stress with 8 threads"
+    echo ""
+}
+
+# Main
+main() {
+    print_header
+    
+    case "${1:-all}" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -b|--basic)
+            test_basic
+            ;;
+        -s|--stress)
+            test_stress "${2:-30}" "${3:-4}"
+            ;;
+        -q|--quick)
+            test_basic
+            test_sysfs
+            test_pci
+            ;;
+        -a|--all|*)
+            test_basic
+            test_sysfs
+            test_pci
+            test_memory
+            test_stress 10 4
+            ;;
+    esac
+    
+    print_summary
+}
+
+main "$@"

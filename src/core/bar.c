@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * bar.c - PCIe BAR mapping and management
+ * bar.c - The Airlock
  *
  * Handles mapping GPU VRAM through the PCIe BAR aperture.
  * Tesla/Datacenter GPUs ship with Large BAR enabled, exposing
@@ -14,9 +14,10 @@
 
 #include <pseudoscopic/pseudoscopic.h>
 #include <pseudoscopic/hw.h>
+#include <pseudoscopic/asm.h>
 
-/* Module parameter - declared in module.c */
-extern int bar_index;
+/* Exported from module.c */
+extern int ps_bar_index;
 
 /*
  * ps_bar_map - Map GPU VRAM BAR with write-combining
@@ -35,30 +36,30 @@ int ps_bar_map(struct ps_device *dev)
     unsigned long bar_flags;
     
     /* Get BAR information */
-    bar_start = pci_resource_start(pdev, bar_index);
-    bar_size = pci_resource_len(pdev, bar_index);
-    bar_flags = pci_resource_flags(pdev, bar_index);
+    bar_start = pci_resource_start(pdev, ps_bar_index);
+    bar_size = pci_resource_len(pdev, ps_bar_index);
+    bar_flags = pci_resource_flags(pdev, ps_bar_index);
     
     /* Validate BAR exists and is memory-mapped */
     if (!bar_start || !bar_size) {
-        ps_err(dev, "BAR%d not present or empty\n", bar_index);
+        ps_err(dev, "BAR%d not present or empty\n", ps_bar_index);
         return -ENODEV;
     }
     
     if (!(bar_flags & IORESOURCE_MEM)) {
         ps_err(dev, "BAR%d is not memory-mapped (flags=0x%lx)\n",
-               bar_index, bar_flags);
+               ps_bar_index, bar_flags);
         return -EINVAL;
     }
     
     ps_dbg(dev, "BAR%d: start=0x%llx size=%llu MB flags=0x%lx\n",
-           bar_index, (unsigned long long)bar_start,
+           ps_bar_index, (unsigned long long)bar_start,
            (unsigned long long)(bar_size >> 20), bar_flags);
     
     /* Request the region */
     if (!devm_request_mem_region(&pdev->dev, bar_start, bar_size,
                                   "pseudoscopic")) {
-        ps_err(dev, "failed to request BAR%d region\n", bar_index);
+        ps_err(dev, "failed to request BAR%d region\n", ps_bar_index);
         return -EBUSY;
     }
     
@@ -72,9 +73,9 @@ int ps_bar_map(struct ps_device *dev)
      *
      * This is critical for achieving near-theoretical PCIe bandwidth.
      */
-    dev->vram = pci_iomap_wc(pdev, bar_index, 0);  /* 0 = map entire BAR */
+    dev->vram = pci_iomap_wc(pdev, ps_bar_index, 0);  /* 0 = map entire BAR */
     if (!dev->vram) {
-        ps_err(dev, "failed to iomap BAR%d with write-combining\n", bar_index);
+        ps_err(dev, "failed to iomap BAR%d with write-combining\n", ps_bar_index);
         return -ENOMEM;
     }
     

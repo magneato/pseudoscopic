@@ -12,7 +12,9 @@
 ;
 ; Copyright (C) 2025 Neural Splines LLC
 ; Author: Robert L. Sitton, Jr.
-
+;
+; "C is for cookie, that's good enough for me."
+;   - The Cookie Monster, philosopher
 
 BITS 64
 DEFAULT REL

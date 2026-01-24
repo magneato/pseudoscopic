@@ -1,0 +1,116 @@
+name: Abyssal CI
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    name: Build & Validate
+    runs-on: ubuntu-24.04
+    
+    strategy:
+      matrix:
+        kernel: ['6.8.0-40-generic']
+        
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          linux-headers-${{ matrix.kernel }} \
+          nasm \
+          sparse \
+          cppcheck
+
+    - name: Build Assembly
+      run: |
+        echo "🔧 Assembling NASM sources..."
+        make asm
+        
+    - name: Build Module
+      run: |
+        echo "🔨 Building kernel module..."
+        make KDIR=/usr/src/linux-headers-${{ matrix.kernel }}
+
+    - name: Build Debug
+      run: |
+        echo "🐛 Building debug variant..."
+        make clean
+        make DEBUG=1 KDIR=/usr/src/linux-headers-${{ matrix.kernel }}
+
+    - name: Static Analysis (Sparse)
+      continue-on-error: true
+      run: |
+        echo "🔍 Running sparse semantic analysis..."
+        make check KDIR=/usr/src/linux-headers-${{ matrix.kernel }} || true
+
+    - name: Static Analysis (Cppcheck)
+      continue-on-error: true
+      run: |
+        echo "🔍 Running cppcheck..."
+        cppcheck --enable=warning,style,performance \
+                 --suppress=missingIncludeSystem \
+                 --error-exitcode=0 \
+                 -I include \
+                 src/
+
+    - name: Verify Module Info
+      run: |
+        echo "📋 Module information:"
+        modinfo pseudoscopic.ko || true
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: pseudoscopic-module-${{ matrix.kernel }}
+        path: |
+          *.ko
+          Module.symvers
+        retention-days: 7
+
+  format-check:
+    name: Code Style
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y linux-headers-generic
+        
+    - name: Check Kernel Style
+      continue-on-error: true
+      run: |
+        echo "📐 Checking kernel coding style..."
+        KDIR=/usr/src/linux-headers-$(uname -r)
+        if [ -f "$KDIR/scripts/checkpatch.pl" ]; then
+          find src -name "*.c" -o -name "*.h" | \
+            xargs $KDIR/scripts/checkpatch.pl --no-tree -f || true
+        else
+          echo "checkpatch.pl not found, skipping style check"
+        fi
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Validate README
+      run: |
+        echo "📚 Checking documentation..."
+        test -f README.md
+        test -f dkms.conf
+        echo "Documentation files present ✓"

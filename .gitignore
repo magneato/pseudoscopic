@@ -1,6 +1,47 @@
-*.i
-*.ii
-*.gpu
-*.ptx
-*.cubin
-*.fatbin
+# Build artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+*.a
+*.order
+*.symvers
+.tmp_versions/
+.*.cmd
+*.d
+
+# Module signing
+*.ko.unsigned
+*.ko.debug
+
+# DKMS build
+/dkms/build/
+
+# Kernel build
+Module.symvers
+modules.order
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.cproject
+.settings/
+compile_commands.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test outputs
+test_results/
+
+# Temporary files
+*.tmp
+*.bak

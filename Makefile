@@ -30,6 +30,7 @@ INCLUDES := -I$(PWD)/include
 C_SRCS := $(SRC_DIR)/core/module.c \
           $(SRC_DIR)/core/bar.c \
           $(SRC_DIR)/core/pool.c \
+          $(SRC_DIR)/core/block.c \
           $(SRC_DIR)/hmm/device.c \
           $(SRC_DIR)/hmm/migrate.c \
           $(SRC_DIR)/hmm/notifier.c \

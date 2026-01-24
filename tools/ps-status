@@ -1,0 +1,275 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+#
+# ps-status - Pseudoscopic runtime status and statistics
+#
+# Displays current state of the GPU VRAM driver including
+# memory usage, migration statistics, and device info.
+#
+# Copyright (C) 2025 Neural Splines LLC
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+BOLD='\033[1m'
+
+# Module name
+MODULE="pseudoscopic"
+
+# Print header
+print_header() {
+    echo -e "${BOLD}${CYAN}"
+    echo "╔═══════════════════════════════════════════════════════════════════╗"
+    echo "║                    Pseudoscopic Status                            ║"
+    echo "║              GPU VRAM as System RAM for Linux                     ║"
+    echo "╚═══════════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+}
+
+# Check if module is loaded
+check_module() {
+    if lsmod | grep -q "^${MODULE}"; then
+        echo -e "${GREEN}●${NC} Module: ${GREEN}loaded${NC}"
+        return 0
+    else
+        echo -e "${RED}●${NC} Module: ${RED}not loaded${NC}"
+        echo ""
+        echo -e "${YELLOW}Load with: sudo modprobe ${MODULE}${NC}"
+        return 1
+    fi
+}
+
+# Get module version
+get_version() {
+    local version
+    version=$(modinfo -F version ${MODULE} 2>/dev/null || echo "unknown")
+    echo -e "  Version: ${CYAN}${version}${NC}"
+}
+
+# Find device sysfs path
+find_device() {
+    local device_path
+    device_path=$(find /sys/devices -name "pseudoscopic" -type d 2>/dev/null | head -1)
+    echo "$device_path"
+}
+
+# Display VRAM information
+show_vram_info() {
+    local sysfs_path="$1"
+    
+    echo ""
+    echo -e "${BOLD}VRAM Configuration${NC}"
+    echo "────────────────────────────────────────────────────"
+    
+    if [[ -f "${sysfs_path}/vram_size" ]]; then
+        local size_bytes size_mb size_gb
+        size_bytes=$(cat "${sysfs_path}/vram_size")
+        size_mb=$((size_bytes / 1024 / 1024))
+        size_gb=$(echo "scale=1; ${size_mb} / 1024" | bc)
+        echo -e "  Total VRAM:     ${CYAN}${size_gb} GB${NC} (${size_mb} MB)"
+    fi
+    
+    if [[ -f "${sysfs_path}/pool_total" ]]; then
+        local total_pages total_mb
+        total_pages=$(cat "${sysfs_path}/pool_total")
+        total_mb=$((total_pages * 4 / 1024))
+        echo -e "  Pool Total:     ${total_pages} pages (${total_mb} MB)"
+    fi
+    
+    if [[ -f "${sysfs_path}/pool_free" ]]; then
+        local free_pages free_mb used_pages used_pct
+        free_pages=$(cat "${sysfs_path}/pool_free")
+        free_mb=$((free_pages * 4 / 1024))
+        
+        if [[ -f "${sysfs_path}/pool_total" ]]; then
+            total_pages=$(cat "${sysfs_path}/pool_total")
+            used_pages=$((total_pages - free_pages))
+            if [[ $total_pages -gt 0 ]]; then
+                used_pct=$((used_pages * 100 / total_pages))
+            else
+                used_pct=0
+            fi
+            echo -e "  Pool Free:      ${GREEN}${free_pages}${NC} pages (${free_mb} MB)"
+            echo -e "  Pool Used:      ${YELLOW}${used_pages}${NC} pages (${used_pct}%)"
+            
+            # Visual bar
+            local bar_width=40
+            local filled=$((used_pct * bar_width / 100))
+            local empty=$((bar_width - filled))
+            printf "  Usage:          ["
+            printf "${YELLOW}%0.s█${NC}" $(seq 1 $filled) 2>/dev/null || true
+            printf "%0.s░" $(seq 1 $empty) 2>/dev/null || true
+            printf "] %d%%\n" $used_pct
+        fi
+    fi
+}
+
+# Display migration statistics
+show_stats() {
+    local sysfs_path="$1"
+    
+    echo ""
+    echo -e "${BOLD}Migration Statistics${NC}"
+    echo "────────────────────────────────────────────────────"
+    
+    local stats=("migrations_to_ram" "migrations_to_device" "page_faults" 
+                 "alloc_failures" "dma_failures" "notifier_invalidations")
+    local labels=("To RAM" "To Device" "Page Faults" 
+                  "Alloc Fails" "DMA Fails" "Notifier Inv")
+    
+    for i in "${!stats[@]}"; do
+        local stat="${stats[$i]}"
+        local label="${labels[$i]}"
+        if [[ -f "${sysfs_path}/${stat}" ]]; then
+            local value
+            value=$(cat "${sysfs_path}/${stat}")
+            
+            # Color based on stat type
+            local color="${NC}"
+            if [[ "${stat}" == *"fail"* && "$value" -gt 0 ]]; then
+                color="${RED}"
+            elif [[ "${stat}" == "migrations_to_ram" || "${stat}" == "migrations_to_device" ]]; then
+                color="${CYAN}"
+            fi
+            
+            printf "  %-18s ${color}%'12d${NC}\n" "${label}:" "$value"
+        fi
+    done
+}
+
+# Display PCI device info
+show_pci_info() {
+    echo ""
+    echo -e "${BOLD}PCI Device Information${NC}"
+    echo "────────────────────────────────────────────────────"
+    
+    # Find NVIDIA GPUs
+    local gpu_info
+    gpu_info=$(lspci -nn | grep -i nvidia | head -1)
+    
+    if [[ -n "$gpu_info" ]]; then
+        local bdf device_name
+        bdf=$(echo "$gpu_info" | awk '{print $1}')
+        device_name=$(echo "$gpu_info" | cut -d: -f3-)
+        
+        echo -e "  BDF:            ${CYAN}${bdf}${NC}"
+        echo -e "  Device:         ${device_name}"
+        
+        # Get BAR info
+        local bar1_info
+        bar1_info=$(lspci -v -s "$bdf" 2>/dev/null | grep "Memory at" | head -2 | tail -1)
+        if [[ -n "$bar1_info" ]]; then
+            echo -e "  BAR1:           ${bar1_info}"
+        fi
+        
+        # PCIe link info
+        local link_info
+        link_info=$(lspci -vv -s "$bdf" 2>/dev/null | grep "LnkSta:" | head -1)
+        if [[ -n "$link_info" ]]; then
+            echo -e "  PCIe Link:      $(echo "$link_info" | sed 's/.*LnkSta://')"
+        fi
+    else
+        echo -e "  ${YELLOW}No NVIDIA GPU found${NC}"
+    fi
+}
+
+# Display kernel memory info
+show_meminfo() {
+    echo ""
+    echo -e "${BOLD}System Memory${NC}"
+    echo "────────────────────────────────────────────────────"
+    
+    # Standard memory info
+    local mem_total mem_avail mem_used_pct
+    mem_total=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    mem_avail=$(grep MemAvailable /proc/meminfo | awk '{print $2}')
+    mem_used_pct=$(( (mem_total - mem_avail) * 100 / mem_total ))
+    
+    echo -e "  System RAM:     $(( mem_total / 1024 )) MB total, $(( mem_avail / 1024 )) MB available"
+    
+    # Check for ZONE_DEVICE memory
+    if grep -q "Device" /proc/meminfo 2>/dev/null; then
+        local dev_total dev_free
+        dev_total=$(grep DeviceTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo "0")
+        dev_free=$(grep DeviceFree /proc/meminfo 2>/dev/null | awk '{print $2}' || echo "0")
+        if [[ "$dev_total" -gt 0 ]]; then
+            echo -e "  Device Memory:  ${CYAN}$(( dev_total / 1024 )) MB${NC} total, $(( dev_free / 1024 )) MB free"
+        fi
+    fi
+}
+
+# Watch mode - continuous updates
+watch_mode() {
+    local interval="${1:-2}"
+    
+    echo -e "${YELLOW}Watch mode - updating every ${interval}s (Ctrl+C to exit)${NC}"
+    echo ""
+    
+    while true; do
+        clear
+        print_header
+        
+        if check_module; then
+            local sysfs_path
+            sysfs_path=$(find_device)
+            
+            if [[ -n "$sysfs_path" ]]; then
+                show_vram_info "$sysfs_path"
+                show_stats "$sysfs_path"
+            fi
+            
+            show_meminfo
+        fi
+        
+        echo ""
+        echo -e "${CYAN}Last updated: $(date '+%Y-%m-%d %H:%M:%S')${NC}"
+        
+        sleep "$interval"
+    done
+}
+
+# Main
+main() {
+    case "${1:-}" in
+        -w|--watch)
+            watch_mode "${2:-2}"
+            ;;
+        -h|--help)
+            echo "Usage: ps-status [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  -w, --watch [N]  Watch mode, update every N seconds (default: 2)"
+            echo "  -h, --help       Show this help message"
+            echo ""
+            exit 0
+            ;;
+        *)
+            print_header
+            
+            if check_module; then
+                get_version
+                
+                local sysfs_path
+                sysfs_path=$(find_device)
+                
+                if [[ -n "$sysfs_path" ]]; then
+                    show_vram_info "$sysfs_path"
+                    show_stats "$sysfs_path"
+                else
+                    echo -e "${YELLOW}  Warning: sysfs attributes not found${NC}"
+                fi
+                
+                show_pci_info
+                show_meminfo
+            fi
+            ;;
+    esac
+}
+
+main "$@"
