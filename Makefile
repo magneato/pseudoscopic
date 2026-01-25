@@ -19,6 +19,12 @@ MODULE_VERSION := 0.0.1
 # Kernel build directory
 KDIR ?= /lib/modules/$(shell uname -r)/build
 
+# Match the compiler used to build the running kernel to avoid warnings
+KERNEL_CC := $(shell if [ -f "$(KDIR)/include/generated/compile.h" ]; then \
+	awk -F'"' '/LINUX_COMPILER/ {print $$2}' "$(KDIR)/include/generated/compile.h" | awk '{print $$1}'; \
+	fi)
+CC ?= $(if $(KERNEL_CC),$(KERNEL_CC),gcc)
+
 # Source directories
 SRC_DIR := src
 ASM_DIR := $(SRC_DIR)/asm
@@ -94,7 +100,7 @@ $(ASM_DIR)/%.o: $(ASM_DIR)/%.asm
 # Build kernel module
 modules: asm
 	@echo "  Building kernel module..."
-	$(MAKE) -C $(KDIR) M=$(PWD)/src modules EXTRA_CFLAGS="-I$(PWD)/include"
+	$(MAKE) -C $(KDIR) M=$(PWD)/src modules CC=$(CC) EXTRA_CFLAGS="-I$(PWD)/include"
 
 # Clean all artifacts
 clean:

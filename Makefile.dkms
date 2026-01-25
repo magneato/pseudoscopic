@@ -11,6 +11,12 @@ MODULE_NAME := pseudoscopic
 # Kernel build directory (set by DKMS)
 KDIR ?= /lib/modules/$(shell uname -r)/build
 
+# Match the compiler used to build the running kernel to avoid warnings
+KERNEL_CC := $(shell if [ -f "$(KDIR)/include/generated/compile.h" ]; then \
+    awk -F'"' '/LINUX_COMPILER/ {print $$2}' "$(KDIR)/include/generated/compile.h" | awk '{print $$1}'; \
+    fi)
+CC ?= $(if $(KERNEL_CC),$(KERNEL_CC),gcc)
+
 # Include path
 ccflags-y := -I$(PWD)/include
 ccflags-y += -Wall -Wextra -Werror
@@ -40,7 +46,7 @@ $(PWD)/src/asm/%.o: $(PWD)/src/asm/%.asm
 
 # Build targets
 all: asm_files
-	$(MAKE) -C $(KDIR) M=$(PWD)/src modules
+    $(MAKE) -C $(KDIR) M=$(PWD)/src modules CC=$(CC)
 
 asm_files:
 	cd $(PWD)/src/asm && nasm $(NASMFLAGS) -o memcpy_wc.o memcpy_wc.asm
