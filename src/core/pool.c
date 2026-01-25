@@ -241,7 +241,7 @@ unsigned long ps_pool_free_count(struct ps_pool *pool)
  *
  * Returns: First page in range, or NULL if not available
  */
-struct page *ps_pool_alloc_range(struct ps_pool *pool,
+static __maybe_unused struct page *ps_pool_alloc_range(struct ps_pool *pool,
                                   unsigned long count,
                                   unsigned long *start_bit)
 {
@@ -286,7 +286,7 @@ struct page *ps_pool_alloc_range(struct ps_pool *pool,
  * @page: First page in range
  * @count: Number of pages to free
  */
-void ps_pool_free_range(struct ps_pool *pool, struct page *page,
+static __maybe_unused void ps_pool_free_range(struct ps_pool *pool, struct page *page,
                         unsigned long count)
 {
     struct ps_device *dev;

@@ -210,7 +210,7 @@ int ps_bar_resize(struct ps_device *dev, resource_size_t size)
     pci_read_config_dword(pdev, pos + PCI_REBAR_CTRL, &ctrl);
     ctrl &= ~PCI_REBAR_CTRL_BAR_SIZE_MASK;
     ctrl |= (target_size_code << PCI_REBAR_CTRL_BAR_SIZE_SHIFT);
-    ctrl |= (bar_index & PCI_REBAR_CTRL_BAR_IDX_MASK);
+    ctrl |= (ps_bar_index & PCI_REBAR_CTRL_BAR_IDX_MASK);
     
     ps_info(dev, "attempting BAR resize to %llu MB (code=%u)\n",
             (unsigned long long)(size >> 20), target_size_code);
@@ -258,7 +258,7 @@ u32 ps_bar_read_mmio(struct ps_device *dev, u32 offset)
  *
  * Returns: Architecture code (NV_PMC_BOOT_0_ARCH_*)
  */
-unsigned int ps_bar_get_gpu_arch(struct ps_device *dev)
+static unsigned int __maybe_unused ps_bar_get_gpu_arch(struct ps_device *dev)
 {
     u32 boot0;
     

@@ -94,15 +94,16 @@ $(ASM_DIR)/%.o: $(ASM_DIR)/%.asm
 # Build kernel module
 modules: asm
 	@echo "  Building kernel module..."
-	$(MAKE) -C $(KDIR) M=$(PWD) modules
+	$(MAKE) -C $(KDIR) M=$(PWD)/src modules EXTRA_CFLAGS="-I$(PWD)/include"
 
 # Clean all artifacts
 clean:
 	@echo "  Cleaning..."
-	$(MAKE) -C $(KDIR) M=$(PWD) clean 2>/dev/null || true
+	$(MAKE) -C $(KDIR) M=$(PWD)/src clean 2>/dev/null || true
 	rm -f $(ASM_DIR)/*.o
-	rm -f Module.symvers modules.order
-	rm -rf .tmp_versions
+	rm -f src/Module.symvers src/modules.order Module.symvers modules.order
+	rm -rf src/.tmp_versions .tmp_versions
+	rm -f src/*.ko src/*.mod.c src/*.mod src/*.o
 
 # Install module with DKMS
 install: dkms-install

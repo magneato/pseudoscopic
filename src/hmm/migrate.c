@@ -198,7 +198,7 @@ int ps_migrate_to_device(struct ps_context *ctx,
                          unsigned long size)
 {
     struct ps_device *dev = ctx->dev;
-    unsigned long src_pfns[64], dst_pfns[64];
+    unsigned long *src_pfns, *dst_pfns;
     struct migrate_vma args = { 0 };
     struct vm_area_struct *vma;
     unsigned long npages;
@@ -209,6 +209,13 @@ int ps_migrate_to_device(struct ps_context *ctx,
     if (npages > 64)
         npages = 64;  /* Process in chunks */
     
+    src_pfns = kcalloc(npages, sizeof(*src_pfns), GFP_KERNEL);
+    dst_pfns = kcalloc(npages, sizeof(*dst_pfns), GFP_KERNEL);
+    if (!src_pfns || !dst_pfns) {
+        ret = -ENOMEM;
+        goto out_free;
+    }
+
     ps_dbg(dev, "migrate_to_device: start=0x%lx size=%lu pages=%lu\n",
            start, size, npages);
     
@@ -217,8 +224,8 @@ int ps_migrate_to_device(struct ps_context *ctx,
     
     vma = vma_lookup(ctx->mm, start);
     if (!vma) {
-        mmap_read_unlock(ctx->mm);
-        return -EFAULT;
+        ret = -EFAULT;
+        goto out_unlock;
     }
     
     /* Set up migration */
@@ -232,8 +239,7 @@ int ps_migrate_to_device(struct ps_context *ctx,
     
     ret = migrate_vma_setup(&args);
     if (ret) {
-        mmap_read_unlock(ctx->mm);
-        return ret;
+        goto out_unlock;
     }
     
     /*
@@ -285,8 +291,17 @@ int ps_migrate_to_device(struct ps_context *ctx,
     migrate_vma_finalize(&args);
     
     mmap_read_unlock(ctx->mm);
-    
+
     ps_dbg(dev, "migrate_to_device: completed\n");
-    
+
+    kfree(dst_pfns);
+    kfree(src_pfns);
     return 0;
+
+out_unlock:
+    mmap_read_unlock(ctx->mm);
+out_free:
+    kfree(dst_pfns);
+    kfree(src_pfns);
+    return ret;
 }

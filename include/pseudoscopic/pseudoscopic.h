@@ -29,7 +29,12 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/blk-mq.h>
+#include <linux/blkdev.h>
+#include <linux/version.h>
+/* gendisk.h merged into blkdev.h in kernel 5.18+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
 #include <linux/gendisk.h>
+#endif
 
 /*
  * Version: 0.0.x indicates pre-release development
@@ -50,24 +55,24 @@
  */
 #define ps_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#define ps_err(dev, fmt, ...) \
-    dev_err(&(dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
+#define ps_err(ps_dev, fmt, ...) \
+    dev_err(&(ps_dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
 
-#define ps_warn(dev, fmt, ...) \
-    dev_warn(&(dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
+#define ps_warn(ps_dev, fmt, ...) \
+    dev_warn(&(ps_dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
 
-#define ps_info(dev, fmt, ...) \
-    dev_info(&(dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
+#define ps_info(ps_dev, fmt, ...) \
+    dev_info(&(ps_dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
 
 /* Raw debug for early boot/probe logic where dev might be NULL */
 #define ps_dbg_raw(fmt, ...) \
     pr_debug(ps_fmt(fmt), ##__VA_ARGS__)
 
 #ifdef DEBUG
-#define ps_dbg(dev, fmt, ...) \
-    dev_dbg(&(dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
+#define ps_dbg(ps_dev, fmt, ...) \
+    dev_dbg(&(ps_dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
 #else
-#define ps_dbg(dev, fmt, ...) \
+#define ps_dbg(ps_dev, fmt, ...) \
     no_printk(KERN_DEBUG ps_fmt(fmt), ##__VA_ARGS__)
 #endif
 
@@ -373,10 +378,16 @@ int ps_dma_copy_from_vram(struct ps_device *dev,
                           struct page *dst,
                           struct page *src);
 
+int ps_dma_copy_sync(struct ps_device *dev,
+                     void *dst,
+                     const void *src,
+                     size_t size,
+                     bool to_vram);
+
 /*
  * Assembly Functions - The Bioluminescent Speed
  * ----------------------------------------------
- * Defined in src/asm/*.asm
+ * Defined in src/asm/ (memcpy_wc.asm, cache_ops.asm, barriers.asm)
  *
  * These are the performance-critical hot paths,
  * hand-optimized for cache behavior and throughput.

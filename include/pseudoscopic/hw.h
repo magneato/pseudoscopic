@@ -20,16 +20,28 @@
  */
 
 /* PCIe Resizable BAR capability ID */
+#ifndef PCI_EXT_CAP_ID_REBAR
 #define PCI_EXT_CAP_ID_REBAR    0x15
+#endif
 
 /* Resizable BAR capability structure offsets */
+#ifndef PCI_REBAR_CAP
 #define PCI_REBAR_CAP           0x04    /* Capability register */
+#endif
+#ifndef PCI_REBAR_CTRL
 #define PCI_REBAR_CTRL          0x08    /* Control register */
+#endif
 
 /* Resizable BAR control register bits */
+#ifndef PCI_REBAR_CTRL_BAR_IDX_MASK
 #define PCI_REBAR_CTRL_BAR_IDX_MASK     0x00000007
+#endif
+#ifndef PCI_REBAR_CTRL_BAR_SIZE_MASK
 #define PCI_REBAR_CTRL_BAR_SIZE_MASK    0x00001F00
+#endif
+#ifndef PCI_REBAR_CTRL_BAR_SIZE_SHIFT
 #define PCI_REBAR_CTRL_BAR_SIZE_SHIFT   8
+#endif
 
 /* BAR size encoding (2^(n+20) bytes) */
 #define PCI_REBAR_SIZE_1MB      0

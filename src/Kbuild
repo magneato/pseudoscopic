@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# Kbuild file for Pseudoscopic kernel module
+# 
+# This file is read by the kernel build system when building
+# the module from the src/ directory.
+#
+# Copyright (C) 2025 Neural Splines LLC
+
+MODULE_NAME := pseudoscopic
+
+# Include path (relative to src/)
+ccflags-y := -I$(src)/../include
+ccflags-y += -Wall -Wextra -Werror
+ccflags-y += -Wno-unused-parameter
+
+# Debug build
+ifdef DEBUG
+  ccflags-y += -DDEBUG -g -O0
+else
+  ccflags-y += -O2
+endif
+
+# Main module
+obj-m := $(MODULE_NAME).o
+
+# Object files that make up the module
+$(MODULE_NAME)-y := core/module.o \
+                    core/bar.o \
+                    core/pool.o \
+                    core/block.o \
+                    hmm/device.o \
+                    hmm/migrate.o \
+                    hmm/notifier.o \
+                    dma/engine.o \
+                    asm/memcpy_wc.o \
+                    asm/cache_ops.o \
+                    asm/barriers.o
+
+# NASM build rules for .asm sources
+NASM ?= nasm
+NASMFLAGS ?= -f elf64
+
+quiet_cmd_nasm = NASM    $@
+cmd_nasm = $(NASM) $(NASMFLAGS) -o $@ $<
+
+$(obj)/asm/%.o: $(src)/asm/%.asm FORCE
+	$(call if_changed,nasm)

@@ -61,8 +61,7 @@ int ps_hmm_register(struct ps_device *dev)
      */
     dev->vram_res = devm_request_free_mem_region(&dev->pdev->dev,
                                                   &iomem_resource,
-                                                  dev->vram_size,
-                                                  "pseudoscopic_vram");
+                                                  dev->vram_size);
     if (IS_ERR(dev->vram_res)) {
         ret = PTR_ERR(dev->vram_res);
         ps_err(dev, "HMM: failed to request free mem region: %d\n", ret);
