@@ -258,7 +258,7 @@ u32 ps_bar_read_mmio(struct ps_device *dev, u32 offset)
  *
  * Returns: Architecture code (NV_PMC_BOOT_0_ARCH_*)
  */
-static unsigned int __maybe_unused ps_bar_get_gpu_arch(struct ps_device *dev)
+unsigned int ps_bar_get_gpu_arch(struct ps_device *dev)
 {
     u32 boot0;
     

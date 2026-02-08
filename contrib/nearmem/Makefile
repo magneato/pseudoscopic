@@ -25,9 +25,9 @@ ifdef CUDA_AVAILABLE
 endif
 
 # Source files
-LIB_SRCS := src/nearmem.c
+LIB_SRCS := src/nearmem.c src/nearmem_tile.c src/gpucpu.c src/gpufpga.c src/abyssal.c src/nearmem_gpu.c
 CUDA_SRCS := src/nearmem_kernels.cu
-EXAMPLE_SRCS := examples/log_analyzer.c
+EXAMPLE_SRCS := examples/log_analyzer.c examples/kv_cache_tier.c examples/tiled_convolution.c examples/gpucpu_demo.c examples/gpufpga_demo.c examples/abyssal_demo.c
 
 # Object files
 LIB_OBJS := $(LIB_SRCS:.c=.o)
@@ -78,7 +78,25 @@ log_analyzer: examples/log_analyzer.o $(LIB_STATIC)
 kv_cache_tier: examples/kv_cache_tier.o $(LIB_STATIC)
 	$(CC) -o $@ $< -L. -lnearmem $(LDFLAGS) -lpthread
 
-EXAMPLES := log_analyzer kv_cache_tier
+tiled_convolution: examples/tiled_convolution.o $(LIB_STATIC)
+	$(CC) -o $@ $< -L. -lnearmem $(LDFLAGS) -lm
+
+tiled_matmul: examples/tiled_matmul.o $(LIB_STATIC)
+	$(CC) -o $@ $< -L. -lnearmem $(LDFLAGS) -lm
+
+tiletrace: examples/tiletrace.o $(LIB_STATIC)
+	$(CC) -o $@ $< -L. -lnearmem $(LDFLAGS) -lm
+
+gpucpu_demo: examples/gpucpu_demo.o $(LIB_STATIC)
+	$(CC) -o $@ $< -L. -lnearmem $(LDFLAGS)
+
+gpufpga_demo: examples/gpufpga_demo.o $(LIB_STATIC)
+	$(CC) -o $@ $< -L. -lnearmem $(LDFLAGS)
+
+abyssal_demo: examples/abyssal_demo.o $(LIB_STATIC)
+	$(CC) -o $@ $< -L. -lnearmem $(LDFLAGS)
+
+EXAMPLES := log_analyzer kv_cache_tier tiled_convolution tiled_matmul tiletrace gpucpu_demo gpufpga_demo abyssal_demo
 
 # Clean
 clean:

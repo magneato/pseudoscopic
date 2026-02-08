@@ -3,56 +3,18 @@
 # Pseudoscopic DKMS Makefile
 # Used by DKMS for automated builds on kernel updates
 #
-# This is a simplified version of the main Makefile optimized
-# for DKMS's build environment.
+# This wrapper Makefile delegates the actual build to the kernel build system
+# operating on the src/ directory where the Kbuild file resides.
 
 MODULE_NAME := pseudoscopic
 
-# Kernel build directory (set by DKMS)
+# Kernel build directory (usually passed by DKMS, fallback provided)
 KDIR ?= /lib/modules/$(shell uname -r)/build
 
-# Match the compiler used to build the running kernel to avoid warnings
-KERNEL_CC := $(shell if [ -f "$(KDIR)/include/generated/compile.h" ]; then \
-    awk -F'"' '/LINUX_COMPILER/ {print $$2}' "$(KDIR)/include/generated/compile.h" | awk '{print $$1}'; \
-    fi)
-CC ?= $(if $(KERNEL_CC),$(KERNEL_CC),gcc)
+.PHONY: all clean
 
-# Include path
-ccflags-y := -I$(PWD)/include
-ccflags-y += -Wall -Wextra -Werror
-ccflags-y += -Wno-unused-parameter
-ccflags-y += -O2
-
-# NASM flags for assembly
-NASMFLAGS := -f elf64
-
-# Source files relative to this directory
-obj-m := $(MODULE_NAME).o
-
-$(MODULE_NAME)-y := core/module.o \
-                    core/bar.o \
-                    core/pool.o \
-                    hmm/device.o \
-                    hmm/migrate.o \
-                    hmm/notifier.o \
-                    dma/engine.o \
-                    asm/memcpy_wc.o \
-                    asm/cache_ops.o \
-                    asm/barriers.o
-
-# Assembly rule
-$(PWD)/src/asm/%.o: $(PWD)/src/asm/%.asm
-	nasm $(NASMFLAGS) -o $@ $<
-
-# Build targets
-all: asm_files
-    $(MAKE) -C $(KDIR) M=$(PWD)/src modules CC=$(CC)
-
-asm_files:
-	cd $(PWD)/src/asm && nasm $(NASMFLAGS) -o memcpy_wc.o memcpy_wc.asm
-	cd $(PWD)/src/asm && nasm $(NASMFLAGS) -o cache_ops.o cache_ops.asm
-	cd $(PWD)/src/asm && nasm $(NASMFLAGS) -o barriers.o barriers.asm
+all:
+	$(MAKE) -C $(KDIR) M=$(CURDIR)/src modules
 
 clean:
-	$(MAKE) -C $(KDIR) M=$(PWD)/src clean 2>/dev/null || true
-	rm -f $(PWD)/src/asm/*.o
+	$(MAKE) -C $(KDIR) M=$(CURDIR)/src clean

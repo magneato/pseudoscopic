@@ -1,56 +1,39 @@
 #!/bin/bash
-# SPDX-License-Identifier: GPL-2.0
 #
-# setup.sh - Bulletproof Environment Setup for Pseudoscopic
+# Pseudoscopic Complete Installation Script
 #
-# This script prepares your system for building and running Pseudoscopic.
-# After running this script, you can simply run `make` to build the kernel module.
+# This script installs:
+#   1. Pseudoscopic kernel driver (GPU VRAM as block device)
+#   2. Near-memory computing library
+#   3. C++ wrapper and headers
+#   4. Example programs and debugger
 #
-# Usage:
-#   ./setup.sh              # Interactive mode (will prompt for sudo)
-#   sudo ./setup.sh         # Run with root privileges directly
-#   ./setup.sh --check      # Check dependencies without installing
-#   ./setup.sh --cuda       # Also install CUDA toolkit for nearmem library
-#   ./setup.sh --full       # Full install: all deps + CUDA + nearmem library
+# Requirements:
+#   - Linux kernel headers for your running kernel
+#   - GCC matching kernel compiler version
+#   - CUDA toolkit (optional, for GPU acceleration)
+#   - Root access for driver installation
 #
 # Copyright (C) 2025 Neural Splines LLC
-# Author: Robert L. Sitton, Jr.
+# License: MIT
+#
 
 set -e
-
-#-----------------------------------------------------------------------------
-# Configuration
-#-----------------------------------------------------------------------------
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-# Supported distros
-SUPPORTED_DISTROS="Ubuntu 22.04+, Debian 12+, Fedora 38+, Arch Linux"
-
-# Minimum kernel version for HMM support
-MIN_KERNEL_MAJOR=6
-MIN_KERNEL_MINOR=5
-
-#-----------------------------------------------------------------------------
-# Utility Functions
-#-----------------------------------------------------------------------------
-
+# Logging functions
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e "${CYAN}[INFO]${NC} $1"
 }
 
 log_success() {
-    echo -e "${GREEN}[✓]${NC} $1"
+    echo -e "${GREEN}[OK]${NC} $1"
 }
 
 log_warn() {
@@ -61,792 +44,602 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-log_header() {
-    echo ""
-    echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${BOLD}${CYAN}  $1${NC}"
-    echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+# Banner
+print_banner() {
+    echo -e "${CYAN}"
+    echo "╔══════════════════════════════════════════════════════════════════════╗"
+    echo "║                                                                      ║"
+    echo "║   ██████╗ ███████╗███████╗██╗   ██╗██████╗  ██████╗                  ║"
+    echo "║   ██╔══██╗██╔════╝██╔════╝██║   ██║██╔══██╗██╔═══██╗                 ║"
+    echo "║   ██████╔╝███████╗█████╗  ██║   ██║██║  ██║██║   ██║                 ║"
+    echo "║   ██╔═══╝ ╚════██║██╔══╝  ██║   ██║██║  ██║██║   ██║                 ║"
+    echo "║   ██║     ███████║███████╗╚██████╔╝██████╔╝╚██████╔╝                 ║"
+    echo "║   ╚═╝     ╚══════╝╚══════╝ ╚═════╝ ╚═════╝  ╚═════╝SCOPIC            ║"
+    echo "║                                                                      ║"
+    echo "║   Near-Memory Computing via GPU VRAM                                 ║"
+    echo "║   Version 0.0.1                                                      ║"
+    echo "║                                                                      ║"
+    echo "╚══════════════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
 }
 
-command_exists() {
-    command -v "$1" &> /dev/null
-}
+# Detect script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
 
-require_root() {
+# Installation prefix
+PREFIX="${PREFIX:-/usr/local}"
+KERNEL_VERSION=$(uname -r)
+
+# Check if running as root
+check_root() {
     if [[ $EUID -ne 0 ]]; then
-        log_error "This operation requires root privileges"
-        log_info "Run: sudo $SCRIPT_DIR/$SCRIPT_NAME $*"
+        log_error "This script must be run as root (for driver installation)"
+        log_info "Try: sudo $0 $*"
         exit 1
     fi
 }
 
-detect_distro() {
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-        DISTRO_ID="$ID"
-        DISTRO_VERSION="$VERSION_ID"
-        DISTRO_NAME="$NAME"
-    elif command_exists lsb_release; then
-        DISTRO_ID=$(lsb_release -si | tr '[:upper:]' '[:lower:]')
-        DISTRO_VERSION=$(lsb_release -sr)
-        DISTRO_NAME=$(lsb_release -sd)
-    else
-        DISTRO_ID="unknown"
-        DISTRO_VERSION="unknown"
-        DISTRO_NAME="Unknown Distribution"
-    fi
-}
-
-get_package_manager() {
-    if command_exists apt-get; then
-        PKG_MANAGER="apt"
-        PKG_UPDATE="apt-get update"
-        PKG_INSTALL="apt-get install -y"
-    elif command_exists dnf; then
-        PKG_MANAGER="dnf"
-        PKG_UPDATE="dnf check-update || true"
-        PKG_INSTALL="dnf install -y"
-    elif command_exists yum; then
-        PKG_MANAGER="yum"
-        PKG_UPDATE="yum check-update || true"
-        PKG_INSTALL="yum install -y"
-    elif command_exists pacman; then
-        PKG_MANAGER="pacman"
-        PKG_UPDATE="pacman -Sy"
-        PKG_INSTALL="pacman -S --noconfirm"
-    elif command_exists zypper; then
-        PKG_MANAGER="zypper"
-        PKG_UPDATE="zypper refresh"
-        PKG_INSTALL="zypper install -y"
-    else
-        PKG_MANAGER="unknown"
-        log_error "Could not detect package manager"
-        return 1
-    fi
-}
-
-#-----------------------------------------------------------------------------
-# Dependency Checking
-#-----------------------------------------------------------------------------
-
-check_kernel_version() {
-    local kernel_version
-    kernel_version=$(uname -r)
-    local major minor
-    major=$(echo "$kernel_version" | cut -d. -f1)
-    minor=$(echo "$kernel_version" | cut -d. -f2)
+# Detect kernel compiler version
+detect_kernel_compiler() {
+    log_info "Detecting kernel compiler version..." >&2
     
-    if [[ $major -lt $MIN_KERNEL_MAJOR ]] || \
-       [[ $major -eq $MIN_KERNEL_MAJOR && $minor -lt $MIN_KERNEL_MINOR ]]; then
-        log_error "Kernel version $kernel_version is too old"
-        log_error "Pseudoscopic requires kernel $MIN_KERNEL_MAJOR.$MIN_KERNEL_MINOR or newer for HMM support"
-        return 1
+    # Method 1: Check /proc/version
+    if [[ -f /proc/version ]]; then
+        KERNEL_GCC_VERSION=$(cat /proc/version | grep -oP 'gcc[- ]version \K[0-9]+\.[0-9]+' | head -1)
+        if [[ -n "$KERNEL_GCC_VERSION" ]]; then
+            log_info "Kernel compiled with GCC $KERNEL_GCC_VERSION (from /proc/version)" >&2
+            echo "$KERNEL_GCC_VERSION"
+            return 0
+        fi
     fi
     
-    log_success "Kernel version: $kernel_version (>= $MIN_KERNEL_MAJOR.$MIN_KERNEL_MINOR required)"
-    return 0
-}
-
-check_kernel_headers() {
-    local kernel_version
-    kernel_version=$(uname -r)
-    local headers_dir="/lib/modules/${kernel_version}/build"
-    
-    if [[ ! -d "$headers_dir" ]]; then
-        log_warn "Kernel headers not found at: $headers_dir"
-        return 1
+    # Method 2: Check kernel config
+    KERNEL_CONFIG="/boot/config-$KERNEL_VERSION"
+    if [[ -f "$KERNEL_CONFIG" ]]; then
+        KERNEL_GCC_VERSION=$(grep CONFIG_CC_VERSION_TEXT "$KERNEL_CONFIG" 2>/dev/null | \
+                            grep -oP 'gcc[- ]\([^)]+\) \K[0-9]+\.[0-9]+' | head -1)
+        if [[ -n "$KERNEL_GCC_VERSION" ]]; then
+            log_info "Kernel compiled with GCC $KERNEL_GCC_VERSION (from config)" >&2
+            echo "$KERNEL_GCC_VERSION"
+            return 0
+        fi
     fi
     
-    log_success "Kernel headers: $headers_dir"
-    return 0
-}
-
-check_nasm() {
-    if ! command_exists nasm; then
-        log_warn "NASM assembler not found"
-        return 1
+    # Method 3: Check vmlinux if available
+    if [[ -f "/usr/lib/debug/boot/vmlinux-$KERNEL_VERSION" ]]; then
+        KERNEL_GCC_VERSION=$(strings "/usr/lib/debug/boot/vmlinux-$KERNEL_VERSION" 2>/dev/null | \
+                            grep -oP 'GCC: \([^)]+\) \K[0-9]+\.[0-9]+' | head -1)
+        if [[ -n "$KERNEL_GCC_VERSION" ]]; then
+            log_info "Kernel compiled with GCC $KERNEL_GCC_VERSION (from vmlinux)" >&2
+            echo "$KERNEL_GCC_VERSION"
+            return 0
+        fi
     fi
     
-    local version
-    version=$(nasm -v 2>&1 | head -n1 | grep -oP '\d+\.\d+(\.\d+)?' || echo "unknown")
-    log_success "NASM: $version"
-    return 0
+    # Fallback: use current GCC
+    log_warn "Could not detect kernel compiler version, using system GCC" >&2
+    gcc --version | head -1 | grep -oP '\K[0-9]+\.[0-9]+' | head -1
 }
 
-check_gcc() {
-    if ! command_exists gcc; then
-        log_warn "GCC not found"
-        return 1
-    fi
+# Find matching GCC
+find_matching_gcc() {
+    local target_version="$1"
+    local major_version="${target_version%%.*}"
     
-    local version
-    version=$(gcc --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1)
-    version=${version:-unknown}
-    log_success "GCC: $version"
-    return 0
-}
-
-check_make() {
-    if ! command_exists make; then
-        log_warn "Make not found"
-        return 1
-    fi
+    log_info "Looking for GCC $target_version (or compatible)..." >&2
     
-    local version
-    version=$(make --version | head -n1 | grep -oP '\d+\.\d+' || echo "unknown")
-    log_success "Make: $version"
-    return 0
-}
-
-check_dkms() {
-    if ! command_exists dkms; then
-        log_warn "DKMS not found (optional, for automatic kernel updates)"
-        return 1
-    fi
-    
-    local version
-    version=$(dkms --version 2>&1 | grep -oP '\d+\.\d+(\.\d+)?' || echo "unknown")
-    log_success "DKMS: $version"
-    return 0
-}
-
-check_nvidia_gpu() {
-    if ! lspci 2>/dev/null | grep -qi "nvidia"; then
-        log_warn "No NVIDIA GPU detected in lspci output"
-        return 1
-    fi
-    
-    local gpu_info
-    gpu_info=$(lspci 2>/dev/null | grep -i nvidia | head -n1 | cut -d: -f3 | xargs)
-    log_success "NVIDIA GPU: $gpu_info"
-    return 0
-}
-
-check_cuda() {
-    local cuda_path="${CUDA_PATH:-/usr/local/cuda}"
-    
-    if [[ ! -d "$cuda_path" ]]; then
-        # Check alternative locations
-        for path in /usr/local/cuda-* /opt/cuda*; do
-            if [[ -d "$path" ]]; then
-                cuda_path="$path"
-                break
+    # Try exact version first
+    for gcc_path in /usr/bin/gcc-$target_version /usr/bin/gcc-$major_version gcc; do
+        if command -v "$gcc_path" &>/dev/null; then
+            local found_version=$($gcc_path --version | head -1 | grep -oP '\K[0-9]+\.[0-9]+' | head -1)
+            local found_major="${found_version%%.*}"
+            
+            if [[ "$found_major" == "$major_version" ]]; then
+                log_success "Found compatible GCC: $gcc_path (version $found_version)" >&2
+                echo "$gcc_path"
+                return 0
             fi
-        done
-    fi
-    
-    if [[ ! -x "$cuda_path/bin/nvcc" ]]; then
-        log_warn "CUDA toolkit not found (optional, for nearmem library GPU acceleration)"
-        return 1
-    fi
-    
-    local version
-    version=$("$cuda_path/bin/nvcc" --version 2>&1 | grep -oP 'release \K\d+\.\d+' || echo "unknown")
-    log_success "CUDA: $version at $cuda_path"
-    CUDA_DETECTED="$cuda_path"
-    return 0
-}
-
-check_nouveau() {
-    if lsmod 2>/dev/null | grep -q "^nouveau"; then
-        log_warn "nouveau driver is loaded (may conflict with pseudoscopic)"
-        NOUVEAU_LOADED=true
-        return 1
-    fi
-    
-    log_success "nouveau driver: not loaded"
-    NOUVEAU_LOADED=false
-    return 0
-}
-
-check_nvidia_driver() {
-    if lsmod 2>/dev/null | grep -q "^nvidia "; then
-        log_warn "nvidia proprietary driver is loaded"
-        log_info "  For ramdisk mode: nvidia driver can coexist"
-        log_info "  For RAM mode: may need to unload nvidia driver"
-        NVIDIA_LOADED=true
-        return 0
-    fi
-    
-    NVIDIA_LOADED=false
-    return 0
-}
-
-#-----------------------------------------------------------------------------
-# Package Installation
-#-----------------------------------------------------------------------------
-
-install_base_deps() {
-    log_header "Installing Base Dependencies"
-    
-    require_root
-    
-    log_info "Updating package lists..."
-    $PKG_UPDATE 2>/dev/null || true
-    
-    case "$PKG_MANAGER" in
-        apt)
-            local kernel_version
-            kernel_version=$(uname -r)
-            
-            log_info "Installing build essentials..."
-            $PKG_INSTALL \
-                build-essential \
-                linux-headers-"$kernel_version" \
-                nasm \
-                dkms \
-                git \
-                pkg-config \
-                || { log_error "Failed to install packages"; return 1; }
-            ;;
-        
-        dnf|yum)
-            local kernel_version
-            kernel_version=$(uname -r)
-            
-            log_info "Installing development tools..."
-            $PKG_INSTALL \
-                kernel-devel-"$kernel_version" \
-                kernel-headers-"$kernel_version" \
-                gcc \
-                make \
-                nasm \
-                dkms \
-                git \
-                pkgconfig \
-                || { log_error "Failed to install packages"; return 1; }
-            ;;
-        
-        pacman)
-            log_info "Installing development tools..."
-            $PKG_INSTALL \
-                base-devel \
-                linux-headers \
-                nasm \
-                dkms \
-                git \
-                || { log_error "Failed to install packages"; return 1; }
-            ;;
-        
-        zypper)
-            log_info "Installing development tools..."
-            $PKG_INSTALL \
-                kernel-devel \
-                gcc \
-                make \
-                nasm \
-                dkms \
-                git \
-                || { log_error "Failed to install packages"; return 1; }
-            ;;
-        
-        *)
-            log_error "Unsupported package manager: $PKG_MANAGER"
-            log_info "Please install manually:"
-            log_info "  - GCC (build-essential)"
-            log_info "  - Kernel headers for $(uname -r)"
-            log_info "  - NASM assembler"
-            log_info "  - DKMS (optional)"
-            return 1
-            ;;
-    esac
-    
-    log_success "Base dependencies installed successfully"
-    return 0
-}
-
-install_cuda_toolkit() {
-    log_header "Installing CUDA Toolkit"
-    
-    require_root
-    
-    log_info "CUDA installation varies by distribution and GPU."
-    log_info "This will attempt to install CUDA from NVIDIA's repository."
-    echo ""
-    
-    case "$PKG_MANAGER" in
-        apt)
-            # Ubuntu/Debian CUDA installation
-            log_info "Adding NVIDIA CUDA repository..."
-            
-            # Install keyring
-            if [[ ! -f /usr/share/keyrings/cuda-archive-keyring.gpg ]]; then
-                local dist_codename
-                dist_codename=$(lsb_release -cs 2>/dev/null || echo "jammy")
-                
-                # For Ubuntu versions not yet supported, fall back to latest
-                case "$dist_codename" in
-                    noble|mantic|lunar)
-                        dist_codename="jammy"  # Fall back to 22.04
-                        ;;
-                esac
-                
-                wget -q "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb" \
-                    -O /tmp/cuda-keyring.deb 2>/dev/null || {
-                    log_error "Failed to download CUDA keyring"
-                    log_info "Manual install: https://developer.nvidia.com/cuda-downloads"
-                    return 1
-                }
-                dpkg -i /tmp/cuda-keyring.deb
-                rm -f /tmp/cuda-keyring.deb
-            fi
-            
-            $PKG_UPDATE
-            $PKG_INSTALL cuda-toolkit-12-4 || {
-                log_warn "CUDA 12.4 not available, trying generic cuda-toolkit..."
-                $PKG_INSTALL cuda-toolkit || {
-                    log_error "Failed to install CUDA toolkit"
-                    return 1
-                }
-            }
-            ;;
-        
-        dnf|yum)
-            # Fedora/RHEL CUDA installation
-            log_info "Adding NVIDIA CUDA repository..."
-            
-            if [[ ! -f /etc/yum.repos.d/cuda-rhel*.repo ]]; then
-                $PKG_INSTALL dnf-plugins-core
-                dnf config-manager --add-repo \
-                    https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo
-            fi
-            
-            $PKG_INSTALL cuda-toolkit || {
-                log_error "Failed to install CUDA toolkit"
-                return 1
-            }
-            ;;
-        
-        pacman)
-            # Arch Linux CUDA installation
-            $PKG_INSTALL cuda || {
-                log_error "Failed to install CUDA toolkit"
-                return 1
-            }
-            ;;
-        
-        *)
-            log_error "Automatic CUDA installation not supported for $PKG_MANAGER"
-            log_info "Please install CUDA manually from:"
-            log_info "  https://developer.nvidia.com/cuda-downloads"
-            return 1
-            ;;
-    esac
-    
-    # Set up environment
-    if [[ -d /usr/local/cuda ]]; then
-        log_info "Setting up CUDA environment..."
-        
-        # Create profile.d script for persistent PATH
-        cat > /etc/profile.d/cuda.sh << 'EOF'
-# CUDA Toolkit environment
-export CUDA_PATH=/usr/local/cuda
-export PATH=$CUDA_PATH/bin${PATH:+:${PATH}}
-export LD_LIBRARY_PATH=$CUDA_PATH/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
-EOF
-        chmod 644 /etc/profile.d/cuda.sh
-        
-        # Update ldconfig
-        echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf
-        ldconfig 2>/dev/null || true
-    fi
-    
-    log_success "CUDA toolkit installed successfully"
-    log_info "Log out and back in, or run: source /etc/profile.d/cuda.sh"
-    return 0
-}
-
-#-----------------------------------------------------------------------------
-# Pre-flight Validation
-#-----------------------------------------------------------------------------
-
-run_checks() {
-    log_header "Checking Dependencies"
-    
-    local all_pass=true
-    local critical_fail=false
-    
-    # Critical checks (must pass)
-    check_kernel_version || { critical_fail=true; all_pass=false; }
-    check_kernel_headers || all_pass=false
-    check_nasm || all_pass=false
-    check_gcc || all_pass=false
-    check_make || all_pass=false
-    
-    # Optional but recommended
-    check_dkms || true
-    
-    # Hardware checks
-    echo ""
-    log_info "Hardware Detection:"
-    check_nvidia_gpu || true
-    check_nouveau || true
-    check_nvidia_driver || true
-    check_cuda || true
-    
-    echo ""
-    
-    if [[ "$critical_fail" == true ]]; then
-        log_error "Critical requirements not met. Please upgrade your kernel."
-        return 1
-    fi
-    
-    if [[ "$all_pass" == true ]]; then
-        log_success "All required dependencies are installed!"
-        return 0
-    else
-        log_warn "Some dependencies are missing."
-        return 1
-    fi
-}
-
-#-----------------------------------------------------------------------------
-# Build Test
-#-----------------------------------------------------------------------------
-
-test_build() {
-    log_header "Testing Build"
-    
-    cd "$SCRIPT_DIR"
-    
-    log_info "Running: make clean"
-    make clean 2>/dev/null || true
-    
-    log_info "Running: make"
-    if make; then
-        log_success "Kernel module built successfully!"
-        log_info "Output: pseudoscopic.ko"
-        
-        if [[ -f "$SCRIPT_DIR/pseudoscopic.ko" ]]; then
-            local size
-            size=$(du -h "$SCRIPT_DIR/pseudoscopic.ko" | cut -f1)
-            log_success "Module size: $size"
         fi
-        
-        return 0
-    else
-        log_error "Build failed. Check the output above for errors."
-        return 1
-    fi
-}
-
-build_nearmem() {
-    log_header "Building nearmem Library"
+    done
     
-    local nearmem_dir="$SCRIPT_DIR/contrib/nearmem"
+    # Check if default gcc is close enough
+    local system_version=$(gcc --version | head -1 | grep -oP '\K[0-9]+\.[0-9]+' | head -1)
+    local system_major="${system_version%%.*}"
     
-    if [[ ! -d "$nearmem_dir" ]]; then
-        log_warn "nearmem directory not found at: $nearmem_dir"
-        return 1
-    fi
-    
-    cd "$nearmem_dir"
-    
-    log_info "Running: make clean"
-    make clean 2>/dev/null || true
-    
-    # Set CUDA_PATH if detected
-    if [[ -n "$CUDA_DETECTED" ]]; then
-        export CUDA_PATH="$CUDA_DETECTED"
-        log_info "Using CUDA at: $CUDA_PATH"
-    fi
-    
-    log_info "Running: make"
-    if make; then
-        log_success "nearmem library built successfully!"
-        
-        if [[ -f "$nearmem_dir/libnearmem.a" ]]; then
-            log_success "Static library: libnearmem.a"
-        fi
-        if [[ -f "$nearmem_dir/libnearmem.so" ]]; then
-            log_success "Shared library: libnearmem.so"
-        fi
-        if [[ -f "$nearmem_dir/log_analyzer" ]]; then
-            log_success "Example: log_analyzer"
-        fi
-        
-        return 0
-    else
-        log_error "nearmem build failed. Check the output above."
-        return 1
-    fi
-}
-
-#-----------------------------------------------------------------------------
-# Post-Install Configuration
-#-----------------------------------------------------------------------------
-
-configure_nouveau_blacklist() {
-    log_header "Configuring nouveau Blacklist"
-    
-    require_root
-    
-    local blacklist_file="/etc/modprobe.d/blacklist-nouveau.conf"
-    
-    if [[ -f "$blacklist_file" ]]; then
-        log_info "nouveau blacklist already exists at: $blacklist_file"
+    if [[ "$system_major" == "$major_version" ]]; then
+        log_success "System GCC is compatible (version $system_version)" >&2
+        echo "gcc"
         return 0
     fi
     
-    log_info "Creating nouveau blacklist..."
-    cat > "$blacklist_file" << 'EOF'
-# Blacklist nouveau to prevent conflicts with pseudoscopic
-# This is required for RAM mode, optional for ramdisk mode
-blacklist nouveau
-options nouveau modeset=0
-EOF
+    log_error "No compatible GCC found!" >&2
+    log_info "Kernel was compiled with GCC $target_version" >&2
+    log_info "Please install gcc-$major_version:" >&2
+    log_info "  Ubuntu/Debian: apt install gcc-$major_version" >&2
+    log_info "  Fedora/RHEL:   dnf install gcc" >&2
+    return 1
+}
+
+# Check dependencies
+check_dependencies() {
+    log_info "Checking dependencies..."
     
-    log_info "Regenerating initramfs..."
-    if command_exists update-initramfs; then
-        update-initramfs -u
-    elif command_exists dracut; then
-        dracut --force
-    elif command_exists mkinitcpio; then
-        mkinitcpio -P
+    local missing=()
+    
+    # Kernel headers
+    if [[ ! -d "/lib/modules/$KERNEL_VERSION/build" ]]; then
+        missing+=("linux-headers-$KERNEL_VERSION")
     else
-        log_warn "Could not regenerate initramfs automatically"
-        log_info "Please regenerate manually for your distribution"
+        log_success "Kernel headers found"
     fi
     
-    log_success "nouveau blacklist configured"
-    log_warn "Reboot required for blacklist to take effect"
-    return 0
-}
-
-#-----------------------------------------------------------------------------
-# Main Entry Points
-#-----------------------------------------------------------------------------
-
-show_usage() {
-    echo "Pseudoscopic Setup Script"
-    echo ""
-    echo "Usage: $SCRIPT_NAME [OPTIONS]"
-    echo ""
-    echo "Options:"
-    echo "  --check        Check dependencies without installing anything"
-    echo "  --install      Install base dependencies (requires sudo)"
-    echo "  --cuda         Install CUDA toolkit (requires sudo)"
-    echo "  --nearmem      Build nearmem library"
-    echo "  --full         Full setup: deps + CUDA + build + nearmem"
-    echo "  --blacklist    Blacklist nouveau driver (requires sudo)"
-    echo "  --help         Show this message"
-    echo ""
-    echo "Examples:"
-    echo "  ./setup.sh                  # Interactive setup"
-    echo "  ./setup.sh --check          # Just check dependencies"
-    echo "  sudo ./setup.sh --install   # Install dependencies"
-    echo "  ./setup.sh --full           # Complete setup"
-    echo ""
-    echo "Supported distributions: $SUPPORTED_DISTROS"
-}
-
-interactive_setup() {
-    log_header "Pseudoscopic Setup"
-    
-    echo ""
-    echo "  GPU VRAM as System RAM - Reversing depth perception"
-    echo "  in the memory hierarchy."
-    echo ""
-    echo "  Copyright (C) 2025 Neural Splines LLC"
-    echo ""
-    
-    # Detect environment
-    detect_distro
-    get_package_manager
-    
-    log_info "Detected: $DISTRO_NAME"
-    log_info "Package manager: $PKG_MANAGER"
-    
-    # Run dependency checks
-    if run_checks; then
-        echo ""
-        log_success "Environment is ready for building!"
-        echo ""
-        log_info "Next steps:"
-        log_info "  1. Run: make"
-        log_info "  2. Run: sudo make install"
-        log_info "  3. Run: sudo modprobe pseudoscopic mode=ramdisk"
-        log_info "  4. Verify: cat /proc/devices | grep psdisk"
-        echo ""
-        
-        read -p "Would you like to build now? [Y/n] " -n 1 -r
-        echo ""
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-            test_build
-        fi
-        
-        return 0
-    else
-        echo ""
-        log_warn "Some dependencies are missing."
-        echo ""
-        
-        if [[ $EUID -eq 0 ]]; then
-            read -p "Would you like to install missing dependencies? [Y/n] " -n 1 -r
-            echo ""
-            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                install_base_deps
-                echo ""
-                run_checks
-                echo ""
-                test_build
-            fi
+    # Build tools
+    for tool in make gcc g++; do
+        if ! command -v $tool &>/dev/null; then
+            missing+=("$tool")
         else
-            log_info "To install dependencies, run:"
-            log_info "  sudo $SCRIPT_DIR/$SCRIPT_NAME --install"
+            log_success "$tool found: $(command -v $tool)"
         fi
-        
-        return 1
-    fi
-}
-
-full_setup() {
-    log_header "Full Pseudoscopic Setup"
+    done
     
-    detect_distro
-    get_package_manager
-    
-    log_info "Detected: $DISTRO_NAME ($PKG_MANAGER)"
-    
-    # Check if we need sudo for installation
-    if [[ $EUID -ne 0 ]]; then
-        log_info "Requesting sudo for package installation..."
-        sudo "$SCRIPT_DIR/$SCRIPT_NAME" --install-internal
+    # DKMS (optional but recommended)
+    if ! command -v dkms &>/dev/null; then
+        log_warn "DKMS not found (recommended for automatic driver rebuild)"
     else
-        install_base_deps
+        log_success "DKMS found"
     fi
     
-    # Re-check after installation
-    run_checks || {
-        log_error "Dependency installation may have failed"
-        return 1
-    }
-    
-    # Build kernel module
-    test_build || {
-        log_error "Kernel module build failed"
-        return 1
-    }
-    
-    # Check if CUDA is available, install if not
-    if ! check_cuda; then
-        echo ""
-        read -p "Would you like to install CUDA toolkit for GPU acceleration? [y/N] " -n 1 -r
-        echo ""
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            if [[ $EUID -ne 0 ]]; then
-                sudo "$SCRIPT_DIR/$SCRIPT_NAME" --cuda-internal
-            else
-                install_cuda_toolkit
-            fi
-        fi
+    # CUDA (optional)
+    if [[ -d "/usr/local/cuda" ]] || command -v nvcc &>/dev/null; then
+        CUDA_PATH="${CUDA_PATH:-/usr/local/cuda}"
+        log_success "CUDA found: $CUDA_PATH"
+        HAVE_CUDA=1
+    else
+        log_warn "CUDA not found (GPU acceleration disabled)"
+        HAVE_CUDA=0
     fi
     
-    # Build nearmem library
-    build_nearmem || {
-        log_warn "nearmem library build failed (optional)"
-    }
-    
-    echo ""
-    log_header "Setup Complete!"
-    echo ""
-    log_success "Pseudoscopic is ready to use!"
-    echo ""
-    log_info "Quick Start:"
-    log_info "  sudo make install                              # Install via DKMS"
-    log_info "  sudo modprobe pseudoscopic mode=ramdisk        # Load in ramdisk mode"
-    log_info "  ls -la /dev/psdisk0                            # Verify device"
-    log_info "  sudo mkfs.ext4 /dev/psdisk0                    # Format (optional)"
-    log_info "  sudo mount /dev/psdisk0 /mnt/vram              # Mount"
-    echo ""
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log_error "Missing dependencies: ${missing[*]}"
+        log_info "Install with:"
+        log_info "  Ubuntu/Debian: apt install ${missing[*]}"
+        log_info "  Fedora/RHEL:   dnf install ${missing[*]}"
+        return 1
+    fi
     
     return 0
 }
 
-#-----------------------------------------------------------------------------
-# Main
-#-----------------------------------------------------------------------------
+# Detect NVIDIA GPUs
+detect_gpus() {
+    log_info "Detecting NVIDIA GPUs..."
+    
+    GPU_COUNT=0
+    GPU_INFO=()
+    
+    # Use lspci to find NVIDIA GPUs
+    while IFS= read -r line; do
+        if [[ -n "$line" ]]; then
+            GPU_INFO+=("$line")
+            ((GPU_COUNT++))
+        fi
+    done < <(lspci -nn | grep -i 'nvidia' | grep -iE 'vga|3d|display')
+    
+    if [[ $GPU_COUNT -eq 0 ]]; then
+        log_warn "No NVIDIA GPUs detected"
+        log_info "Pseudoscopic requires NVIDIA GPUs with BAR1 access"
+        return 1
+    fi
+    
+    log_success "Found $GPU_COUNT NVIDIA GPU(s):"
+    for i in "${!GPU_INFO[@]}"; do
+        log_info "  GPU $i: ${GPU_INFO[$i]}"
+    done
+    
+    return 0
+}
 
+# Build and install kernel driver
+install_driver() {
+    log_info "Building pseudoscopic kernel driver..."
+    
+    local driver_dir="$PROJECT_ROOT"
+    
+    if [[ ! -d "$driver_dir" ]]; then
+        log_error "Driver source not found at $driver_dir"
+        return 1
+    fi
+    
+    # Get matching GCC
+    local kernel_gcc_version=$(detect_kernel_compiler)
+    local gcc_path=$(find_matching_gcc "$kernel_gcc_version")
+    
+    if [[ -z "$gcc_path" ]]; then
+        return 1
+    fi
+    
+    # Build driver
+    cd "$driver_dir"
+    
+    log_info "Building with CC=$gcc_path..."
+    make clean 2>/dev/null || true
+    make CC="$gcc_path"
+    
+    if [[ ! -f "pseudoscopic.ko" ]]; then
+        log_error "Driver build failed"
+        return 1
+    fi
+    
+    log_success "Driver built successfully"
+    
+    # Install driver
+    log_info "Installing driver module..."
+    
+    local module_dir="/lib/modules/$KERNEL_VERSION/extra"
+    mkdir -p "$module_dir"
+    cp pseudoscopic.ko "$module_dir/"
+    
+    # Update module dependencies
+    depmod -a
+    
+    # Create udev rules
+    log_info "Installing udev rules..."
+    cat > /etc/udev/rules.d/99-pseudoscopic.rules << 'EOF'
+# Pseudoscopic GPU VRAM block devices
+KERNEL=="psdisk[0-9]*", SUBSYSTEM=="block", MODE="0666", GROUP="disk"
+KERNEL=="psdisk[0-9]*", SUBSYSTEM=="block", TAG+="systemd"
+EOF
+    
+    udevadm control --reload-rules
+    
+    # Load module
+    log_info "Loading pseudoscopic module..."
+    modprobe -r pseudoscopic 2>/dev/null || true
+    modprobe pseudoscopic
+    
+    if lsmod | grep -q pseudoscopic; then
+        log_success "Driver loaded successfully"
+        
+        # Check for devices
+        sleep 1
+        if ls /dev/psdisk* &>/dev/null; then
+            log_success "Block devices created:"
+            ls -la /dev/psdisk* 2>/dev/null | while read line; do
+                log_info "  $line"
+            done
+        fi
+    else
+        log_error "Failed to load driver"
+        return 1
+    fi
+    
+    # Set up DKMS if available
+    if command -v dkms &>/dev/null; then
+        log_info "Setting up DKMS for automatic rebuilds..."
+        
+        # Use Makefile target for consistent DKMS setup
+        if make dkms-install; then
+            log_success "DKMS configured"
+        else
+            log_warn "DKMS configuration failed, but manual driver installation succeeded"
+        fi
+    fi
+    
+    # Enable at boot
+    log_info "Enabling driver at boot..."
+    echo "pseudoscopic" > /etc/modules-load.d/pseudoscopic.conf
+    
+    cd "$PROJECT_ROOT"
+    return 0
+}
+
+# Build and install nearmem library
+install_library() {
+    log_info "Building near-memory library..."
+    
+    local lib_dir="$PROJECT_ROOT/contrib/nearmem"
+    
+    if [[ ! -d "$lib_dir" ]]; then
+        log_error "Library source not found at $lib_dir"
+        return 1
+    fi
+    
+    cd "$lib_dir"
+    
+    # Clean and build
+    make clean 2>/dev/null || true
+    make lib
+    
+    if [[ ! -f "libnearmem.a" ]] || [[ ! -f "libnearmem.so" ]]; then
+        log_error "Library build failed"
+        return 1
+    fi
+    
+    log_success "Library built successfully"
+    
+    # Install library
+    log_info "Installing library to $PREFIX..."
+    
+    mkdir -p "$PREFIX/lib"
+    mkdir -p "$PREFIX/include/nearmem"
+    mkdir -p "$PREFIX/include/pseudoscopic"
+    
+    # Libraries
+    cp libnearmem.a "$PREFIX/lib/"
+    cp libnearmem.so "$PREFIX/lib/"
+    
+    # C headers
+    cp include/*.h "$PREFIX/include/nearmem/"
+    
+    # C++ headers (if built)
+    if [[ -f "include/nearmem.hpp" ]]; then
+        cp include/nearmem.hpp "$PREFIX/include/nearmem/"
+    fi
+    
+    # Driver headers
+    cp "$PROJECT_ROOT/include/pseudoscopic/"*.h "$PREFIX/include/pseudoscopic/" 2>/dev/null || true
+    
+    # Update library cache
+    echo "$PREFIX/lib" > /etc/ld.so.conf.d/pseudoscopic.conf
+    ldconfig
+    
+    log_success "Library installed"
+    
+    # Build examples
+    log_info "Building examples..."
+    make examples
+    
+    # Install examples
+    mkdir -p "$PREFIX/share/pseudoscopic/examples"
+    for example in log_analyzer kv_cache_tier tiled_convolution tiled_matmul tiletrace gpucpu_demo gpufpga_demo abyssal_demo; do
+        if [[ -f "$example" ]]; then
+            cp "$example" "$PREFIX/share/pseudoscopic/examples/"
+        fi
+    done
+    
+    log_success "Examples installed to $PREFIX/share/pseudoscopic/examples/"
+    
+    cd "$PROJECT_ROOT"
+    return 0
+}
+
+# Install pkg-config file
+install_pkgconfig() {
+    log_info "Installing pkg-config file..."
+    
+    mkdir -p "$PREFIX/lib/pkgconfig"
+    
+    cat > "$PREFIX/lib/pkgconfig/nearmem.pc" << EOF
+prefix=$PREFIX
+exec_prefix=\${prefix}
+libdir=\${prefix}/lib
+includedir=\${prefix}/include
+
+Name: nearmem
+Description: Near-Memory Computing Library for GPU VRAM
+Version: 0.0.1
+Requires:
+Libs: -L\${libdir} -lnearmem -lpthread -ldl
+Cflags: -I\${includedir}
+EOF
+    
+    log_success "pkg-config file installed"
+}
+
+# Create system info command
+install_info_tool() {
+    log_info "Installing pseudoscopic-info tool..."
+    
+    cat > "$PREFIX/bin/pseudoscopic-info" << 'INFOEOF'
+#!/bin/bash
+#
+# pseudoscopic-info - Display Pseudoscopic system information
+#
+
+echo "Pseudoscopic System Information"
+echo "================================"
+echo ""
+
+# Driver status
+echo "Driver Status:"
+if lsmod | grep -q pseudoscopic; then
+    echo "  Module:  LOADED"
+    modinfo pseudoscopic 2>/dev/null | grep -E "^(version|description):" | sed 's/^/  /'
+else
+    echo "  Module:  NOT LOADED"
+fi
+echo ""
+
+# Devices
+echo "Block Devices:"
+if ls /dev/psdisk* &>/dev/null; then
+    for dev in /dev/psdisk*; do
+        size=$(blockdev --getsize64 "$dev" 2>/dev/null || echo "unknown")
+        if [[ "$size" != "unknown" ]]; then
+            size_mb=$((size / 1024 / 1024))
+            echo "  $dev: ${size_mb} MB"
+        else
+            echo "  $dev: size unknown"
+        fi
+    done
+else
+    echo "  No devices found"
+fi
+echo ""
+
+# GPU Info
+echo "NVIDIA GPUs:"
+lspci -nn | grep -i nvidia | grep -iE 'vga|3d|display' | while read line; do
+    echo "  $line"
+done
+echo ""
+
+# Library
+echo "Library:"
+if pkg-config --exists nearmem 2>/dev/null; then
+    echo "  Version: $(pkg-config --modversion nearmem)"
+    echo "  Libs:    $(pkg-config --libs nearmem)"
+else
+    echo "  Not installed or pkg-config not configured"
+fi
+INFOEOF
+    
+    chmod +x "$PREFIX/bin/pseudoscopic-info"
+    
+    log_success "Info tool installed"
+}
+
+# Verify installation
+verify_installation() {
+    log_info "Verifying installation..."
+    
+    local errors=0
+    
+    # Check driver
+    if ! lsmod | grep -q pseudoscopic; then
+        log_error "Driver not loaded"
+        ((errors++))
+    fi
+    
+    # Check devices
+    if ! ls /dev/psdisk* &>/dev/null; then
+        log_warn "No block devices found (may be normal if no compatible GPU)"
+    fi
+    
+    # Check library
+    if [[ ! -f "$PREFIX/lib/libnearmem.so" ]]; then
+        log_error "Shared library not installed"
+        ((errors++))
+    fi
+    
+    # Check headers
+    if [[ ! -f "$PREFIX/include/nearmem/nearmem.h" ]]; then
+        log_error "Headers not installed"
+        ((errors++))
+    fi
+    
+    # Check pkg-config
+    if ! pkg-config --exists nearmem 2>/dev/null; then
+        log_warn "pkg-config not working (may need to refresh LD cache)"
+    fi
+    
+    if [[ $errors -eq 0 ]]; then
+        log_success "Installation verified successfully"
+        return 0
+    else
+        log_error "Installation verification failed with $errors errors"
+        return 1
+    fi
+}
+
+# Print usage information
+print_usage() {
+    log_info "Installation complete!"
+    echo ""
+    echo "Usage Examples:"
+    echo ""
+    echo "  # Check system status"
+    echo "  pseudoscopic-info"
+    echo ""
+    echo "  # Compile a program"
+    echo "  gcc myprogram.c \$(pkg-config --cflags --libs nearmem) -o myprogram"
+    echo ""
+    echo "  # Run examples"
+    echo "  cd $PREFIX/share/pseudoscopic/examples"
+    echo "  ./abyssal_demo"
+    echo ""
+    echo "  # Use C++ wrapper"
+    echo "  g++ -std=c++17 myprogram.cpp \$(pkg-config --cflags --libs nearmem) -o myprogram"
+    echo ""
+}
+
+# Main installation
 main() {
-    # Parse command line arguments
+    print_banner
+    
+    # Parse arguments
     case "${1:-}" in
         --help|-h)
-            show_usage
+            echo "Usage: $0 [--driver-only|--lib-only|--uninstall]"
+            echo ""
+            echo "Options:"
+            echo "  --driver-only   Install only the kernel driver"
+            echo "  --lib-only      Install only the library (skip driver)"
+            echo "  --uninstall     Remove all installed components"
+            echo "  --help          Show this help"
             exit 0
             ;;
-        
-        --check)
-            detect_distro
-            run_checks
-            exit $?
-            ;;
-        
-        --install)
-            detect_distro
-            get_package_manager
-            install_base_deps
-            run_checks
-            exit $?
-            ;;
-        
-        --install-internal)
-            # Internal: called with sudo from full_setup
-            detect_distro
-            get_package_manager
-            install_base_deps
-            exit $?
-            ;;
-        
-        --cuda)
-            detect_distro
-            get_package_manager
-            install_cuda_toolkit
-            exit $?
-            ;;
-        
-        --cuda-internal)
-            # Internal: called with sudo from full_setup
-            detect_distro
-            get_package_manager
-            install_cuda_toolkit
-            exit $?
-            ;;
-        
-        --nearmem)
-            detect_distro
-            check_cuda || true
-            build_nearmem
-            exit $?
-            ;;
-        
-        --full)
-            full_setup
-            exit $?
-            ;;
-        
-        --blacklist)
-            configure_nouveau_blacklist
-            exit $?
-            ;;
-        
-        --build)
-            test_build
-            exit $?
-            ;;
-        
-        "")
-            # No arguments: interactive mode
-            interactive_setup
-            exit $?
-            ;;
-        
-        *)
-            log_error "Unknown option: $1"
-            show_usage
-            exit 1
+        --uninstall)
+            check_root
+            log_info "Uninstalling Pseudoscopic..."
+            
+            # Unload driver
+            modprobe -r pseudoscopic 2>/dev/null || true
+            
+            # Remove DKMS
+            dkms remove -m pseudoscopic -v 0.0.1 --all 2>/dev/null || true
+            rm -rf /usr/src/pseudoscopic-0.0.1
+            
+            # Remove driver
+            rm -f /lib/modules/*/extra/pseudoscopic.ko
+            rm -f /etc/modules-load.d/pseudoscopic.conf
+            rm -f /etc/udev/rules.d/99-pseudoscopic.rules
+            depmod -a
+            
+            # Remove library
+            rm -f "$PREFIX/lib/libnearmem.a"
+            rm -f "$PREFIX/lib/libnearmem.so"
+            rm -rf "$PREFIX/include/nearmem"
+            rm -rf "$PREFIX/include/pseudoscopic"
+            rm -f "$PREFIX/lib/pkgconfig/nearmem.pc"
+            rm -rf "$PREFIX/share/pseudoscopic"
+            rm -f "$PREFIX/bin/pseudoscopic-info"
+            rm -f /etc/ld.so.conf.d/pseudoscopic.conf
+            ldconfig
+            
+            log_success "Uninstallation complete"
+            exit 0
             ;;
     esac
+    
+    check_root
+    
+    log_info "Starting installation..."
+    log_info "Prefix: $PREFIX"
+    log_info "Kernel: $KERNEL_VERSION"
+    
+    # Check dependencies
+    if ! check_dependencies; then
+        exit 1
+    fi
+    
+    # Detect GPUs
+    detect_gpus || true  # Continue even without GPU
+    
+    # Install driver (unless --lib-only)
+    if [[ "${1:-}" != "--lib-only" ]]; then
+        if ! install_driver; then
+            log_error "Driver installation failed"
+            exit 1
+        fi
+    fi
+    
+    # Install library (unless --driver-only)
+    if [[ "${1:-}" != "--driver-only" ]]; then
+        if ! install_library; then
+            log_error "Library installation failed"
+            exit 1
+        fi
+        
+        install_pkgconfig
+        install_info_tool
+    fi
+    
+    # Verify
+    if verify_installation; then
+        print_usage
+    fi
 }
 
-# Run main
 main "$@"

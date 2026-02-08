@@ -18,7 +18,6 @@
 #include <linux/bio.h>
 #include <linux/fs.h>
 #include <linux/highmem.h>
-#include <linux/version.h>
 
 #include <pseudoscopic/pseudoscopic.h>
 #include <pseudoscopic/asm.h>
@@ -141,10 +140,7 @@ int ps_block_init(struct ps_device *dev)
     bdev->tag_set.queue_depth = 128;
     bdev->tag_set.numa_node = NUMA_NO_NODE;
     bdev->tag_set.cmd_size = 0;
-    bdev->tag_set.flags = 0;
-#ifdef BLK_MQ_F_SHOULD_MERGE
-    bdev->tag_set.flags |= BLK_MQ_F_SHOULD_MERGE;
-#endif
+    bdev->tag_set.flags = BLK_MQ_F_SHOULD_MERGE;
 
     ret = blk_mq_alloc_tag_set(&bdev->tag_set);
     if (ret) {
@@ -158,7 +154,7 @@ int ps_block_init(struct ps_device *dev)
      * blk_mq_alloc_disk creates the gendisk and associates
      * it with our tag set.
      */
-    disk = blk_mq_alloc_disk(&bdev->tag_set, NULL, dev);
+    disk = blk_mq_alloc_disk(&bdev->tag_set, dev);
     if (IS_ERR(disk)) {
         ret = PTR_ERR(disk);
         ps_err(dev, "block: failed to allocate disk: %d\n", ret);
@@ -195,41 +191,17 @@ int ps_block_init(struct ps_device *dev)
      * Align to cache lines (64 bytes) for our ASM routines.
      * Use 4KB blocks for general efficiency.
      */
-    /*
-     * Mark as non-rotational (SSD-like) for better scheduling.
-     * Disable read-ahead since PCIe latency dominates.
-     */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
-    {
-        struct queue_limits lim = queue_limits_start_update(bdev->queue);
-
-        lim.physical_block_size = 4096;
-        lim.logical_block_size = 4096;
-        lim.io_min = 64;
-        lim.io_opt = 4096 * 4;
-
-#ifdef BLK_FEAT_ROTATIONAL
-        lim.features &= ~BLK_FEAT_ROTATIONAL;
-#endif
-#ifdef BLK_FEAT_ADD_RANDOM
-        lim.features &= ~BLK_FEAT_ADD_RANDOM;
-#endif
-
-        ret = queue_limits_commit_update(bdev->queue, &lim);
-        if (ret) {
-            ps_err(dev, "block: failed to update queue limits: %d\n", ret);
-            goto err_disk;
-        }
-    }
-#else
     blk_queue_physical_block_size(bdev->queue, 4096);
     blk_queue_logical_block_size(bdev->queue, 4096);
     blk_queue_io_min(bdev->queue, 64);
     blk_queue_io_opt(bdev->queue, 4096 * 4);  /* 16KB optimal */
 
+    /*
+     * Mark as non-rotational (SSD-like) for better scheduling.
+     * Disable read-ahead since PCIe latency dominates.
+     */
     blk_queue_flag_set(QUEUE_FLAG_NONROT, bdev->queue);
     blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, bdev->queue);
-#endif
 
     /* Store back-reference for queuedata */
     bdev->queue->queuedata = dev;

@@ -30,11 +30,6 @@
 #include <linux/spinlock.h>
 #include <linux/blk-mq.h>
 #include <linux/blkdev.h>
-#include <linux/version.h>
-/* gendisk.h merged into blkdev.h in kernel 5.18+ */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
-#include <linux/gendisk.h>
-#endif
 
 /*
  * Version: 0.0.x indicates pre-release development
@@ -55,24 +50,24 @@
  */
 #define ps_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#define ps_err(ps_dev, fmt, ...) \
-    dev_err(&(ps_dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
+#define ps_err(dev, fmt, ...) \
+    dev_err(&(dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
 
-#define ps_warn(ps_dev, fmt, ...) \
-    dev_warn(&(ps_dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
+#define ps_warn(dev, fmt, ...) \
+    dev_warn(&(dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
 
-#define ps_info(ps_dev, fmt, ...) \
-    dev_info(&(ps_dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
+#define ps_info(dev, fmt, ...) \
+    dev_info(&(dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
 
 /* Raw debug for early boot/probe logic where dev might be NULL */
 #define ps_dbg_raw(fmt, ...) \
     pr_debug(ps_fmt(fmt), ##__VA_ARGS__)
 
 #ifdef DEBUG
-#define ps_dbg(ps_dev, fmt, ...) \
-    dev_dbg(&(ps_dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
+#define ps_dbg(dev, fmt, ...) \
+    dev_dbg(&(dev)->pdev->dev, ps_fmt(fmt), ##__VA_ARGS__)
 #else
-#define ps_dbg(ps_dev, fmt, ...) \
+#define ps_dbg(dev, fmt, ...) \
     no_printk(KERN_DEBUG ps_fmt(fmt), ##__VA_ARGS__)
 #endif
 
@@ -171,6 +166,7 @@ struct ps_block_dev {
  * efficient memory usage tracking.
  */
 struct ps_pool {
+    struct ps_device        *dev;       /* Owner device */
     unsigned long           *bitmap;
     unsigned long           nr_pages;
     unsigned long           free_pages;
@@ -281,6 +277,9 @@ int ps_bar_resize(struct ps_device *dev, resource_size_t size);
 /* Read from MMIO registers */
 u32 ps_bar_read_mmio(struct ps_device *dev, u32 offset);
 
+/* Identify GPU architecture */
+unsigned int ps_bar_get_gpu_arch(struct ps_device *dev);
+
 /*
  * Block Device Functions - The Devouring Maw
  * ------------------------------------------
@@ -308,6 +307,10 @@ void ps_pool_free(struct ps_pool *pool, struct page *page);
 /* Pool statistics */
 unsigned long ps_pool_total(struct ps_pool *pool);
 unsigned long ps_pool_free_count(struct ps_pool *pool);
+
+/* Range allocation */
+struct page *ps_pool_alloc_range(struct ps_pool *pool, unsigned long count, unsigned long *start_bit);
+void ps_pool_free_range(struct ps_pool *pool, struct page *page, unsigned long count);
 
 /*
  * HMM Device Functions - The Deep Interface
@@ -387,7 +390,7 @@ int ps_dma_copy_sync(struct ps_device *dev,
 /*
  * Assembly Functions - The Bioluminescent Speed
  * ----------------------------------------------
- * Defined in src/asm/ (memcpy_wc.asm, cache_ops.asm, barriers.asm)
+ * Defined in src/asm/ (asm files)
  *
  * These are the performance-critical hot paths,
  * hand-optimized for cache behavior and throughput.

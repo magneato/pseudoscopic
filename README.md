@@ -1,321 +1,355 @@
 # Pseudoscopic
 
-**GPU VRAM as System RAM for Linux**
+**GPU VRAM as Near-Memory Computing Platform**
 
-*Reversing depth perception in the memory hierarchy.*
-
-[![CI](https://github.com/magneato/pseudoscopic/actions/workflows/ci.yml/badge.svg)](https://github.com/magneato/pseudoscopic/actions)
-[![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
-[![Kernel: 6.5+](https://img.shields.io/badge/Kernel-6.5+-green.svg)](https://kernel.org)
-
-> *"There are things in the deep that do not sleep, but they do remember."*
+[![CI](https://github.com/neuralsplines/pseudoscopic/actions/workflows/ci.yml/badge.svg)](https://github.com/neuralsplines/pseudoscopic/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
 
-## The Vision
+## Overview
 
-In holography, a **pseudoscopic image** reverses depth—what was near becomes far, what was far becomes near. This driver performs the same reversal in compute architecture: GPU memory, designed to serve massively parallel workloads, now serves the CPU as directly-addressable system RAM.
+Pseudoscopic transforms NVIDIA GPU VRAM into a unified memory platform accessible by both CPU and GPU without expensive data copies. This enables:
 
-Your GPU's VRAM has been sitting idle. We fixed that.
+- **Zero-Copy Access**: CPU directly reads/writes GPU VRAM via BAR1 aperture
+- **Near-Memory Computing**: Process data where it lives, not where you compute
+- **Multi-GPU Support**: Enumerate and manage multiple GPUs
+- **Memory Location API**: Detect if any pointer is in GPU or CPU memory
 
-**Asymmetric solutions.**
+## Architecture
 
-🌐 [pseudoscopic.ai](https://pseudoscopic.ai)  
-💻 [github.com/magneato/pseudoscopic](https://github.com/magneato/pseudoscopic)
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Applications                                     │
+│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                │
+│   │  gpuCPU      │  │  gpuFPGA     │  │  Abyssal     │                │
+│   │ (x86 emu)    │  │ (FPGA sim)   │  │ (debugger)   │                │
+│   └──────────────┘  └──────────────┘  └──────────────┘                │
+├────────────────────────────────────────────────────────────────────────┤
+│                      C++ Wrapper (nearmem.hpp)                         │
+│              RAII • Usage Hints • Type Safety • C++17                  │
+├────────────────────────────────────────────────────────────────────────┤
+│                      Near-Memory Library (libnearmem)                  │
+│      ┌────────────────────────────────────────────────────────────────┐│
+│      │  Core API    │  Tiled API   │  GPU API    │  Sync API         ││
+│      └────────────────────────────────────────────────────────────────┘│
+├────────────────────────────────────────────────────────────────────────┤
+│                      Pseudoscopic Driver (pseudoscopic.ko)             │
+│                   /dev/psdisk0  /dev/psdisk1  ...                      │
+├────────────────────────────────────────────────────────────────────────┤
+│                      GPU Hardware (NVIDIA)                             │
+│                      BAR1 Aperture → VRAM                              │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
----
+## Quick Start
 
-## 🌊 Capabilities
-
-Pseudoscopic operates in three modes, each a different manifestation of the same core technology:
-
-### RAM Mode (Default)
-Extends system memory via Linux HMM (Heterogeneous Memory Management). VRAM becomes transparent, demand-paged memory integrated with the kernel's page allocator.
+### Installation
 
 ```bash
-sudo modprobe pseudoscopic mode=ram
-# → 16GB added to system memory pool
-```
-
-### Ramdisk Mode
-Exposes VRAM as a high-performance block device. Mount it, format it, use it.
-
-```bash
-sudo modprobe pseudoscopic mode=ramdisk
-# → /dev/psdisk0 appears
-
-sudo mkfs.ext4 /dev/psdisk0
-sudo mount /dev/psdisk0 /mnt/vram
-```
-
-### Swap Mode
-Creates a swap-optimized block device. When system RAM fills, pages spill to GPU memory instead of spinning rust.
-
-```bash
-sudo modprobe pseudoscopic mode=swap
-# → /dev/pswap0 appears
-
-sudo mkswap /dev/pswap0
-sudo swapon /dev/pswap0 -p 100  # High priority
-```
-
----
-
-## What This Does
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        CPU Address Space                        │
-├─────────────────────────────────────────────────────────────────┤
-│   System RAM    │         ZONE_DEVICE (GPU VRAM)                │
-│   (DDR4/DDR5)   │         via PCIe BAR1 + HMM                   │
-│                 │                                               │
-│   [========]    │   [================================]          │
-│     64 GB       │              16 GB (P100)                     │
-│                 │              24 GB (P40)                      │
-│                 │              32 GB (V100)                     │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-When a CPU thread touches a page residing in GPU VRAM (RAM mode):
-1. Hardware page fault fires
-2. `migrate_to_ram` callback invoked
-3. DMA engine copies page to system RAM
-4. Page table updated atomically
-5. Thread resumes—transparently
-
-No special APIs. No code changes. The kernel's HMM subsystem handles the machinery. We just taught it to speak GPU.
-
----
-
-## ⚓ Installation
-
-### Requirements
-
-**Hardware:**
-- NVIDIA GPU (Pascal or newer recommended for Large BAR support)
-  - Tesla P100 (16GB HBM2) ✓ *Primary development target*
-  - Tesla P40 (24GB GDDR5X) ✓
-  - Tesla V100 (16/32GB HBM2) ✓
-  - Quadro RTX series ✓
-  - A100 (40/80GB) ✓
-- PCIe Gen3 x16 recommended
-
-**Software:**
-- Ubuntu 24.04 LTS or newer
-- Linux kernel 6.5+
-- NASM 2.15+ (for assembly components)
-- GCC 12+ or Clang 15+
-
-### Quick Start
-
-```bash
-# Clone
-git clone https://github.com/magneato/pseudoscopic.git
+# Clone repository
+git clone https://github.com/neuralsplines/pseudoscopic.git
 cd pseudoscopic
 
-# Build
-make
+# Run installer (requires root)
+sudo ./setup.sh
 
-# Install (DKMS handles kernel updates automatically)
-sudo make install
-
-# Load
-sudo modprobe pseudoscopic
-
-# Verify
-dmesg | grep pseudoscopic
-cat /proc/meminfo | grep Device
+# Verify installation
+pseudoscopic-info
 ```
 
-That's it. Your GPU VRAM is now system memory.
-
----
-
-## Configuration
-
-### Module Parameters
+### Check System Status
 
 ```bash
-# RAM mode (default) - extend system memory
-sudo modprobe pseudoscopic
+$ pseudoscopic-info
 
-# Ramdisk mode - /dev/psdiskN
-sudo modprobe pseudoscopic mode=ramdisk
+Pseudoscopic System Information
+================================
 
-# Swap mode - /dev/pswapN  
-sudo modprobe pseudoscopic mode=swap
+Driver Status:
+  Module:  LOADED
+  version: 0.0.1
 
-# Select specific GPU (useful for multi-GPU systems)
-sudo modprobe pseudoscopic device_idx=1
+Block Devices:
+  /dev/psdisk0: 16384 MB
+  /dev/psdisk1: 16384 MB
 
-# Force binding to primary display (caution!)
-sudo modprobe pseudoscopic device_idx=0
+NVIDIA GPUs:
+  01:00.0 VGA compatible controller: NVIDIA Corporation Device [10de:2204]
 ```
 
-### Primary Display Protection
+### C Example
 
-By default, Pseudoscopic **skips the primary display** to prevent killing your desktop session. It automatically detects the boot VGA device and refuses to bind.
+```c
+#include <nearmem/nearmem.h>
+#include <nearmem/nearmem_gpu.h>
 
-To override (you know what you're doing):
-```bash
-sudo modprobe pseudoscopic device_idx=0  # Explicitly request first GPU
+int main() {
+    // Initialize for first GPU
+    nearmem_ctx_t ctx;
+    nearmem_init(&ctx, "/dev/psdisk0", 0);
+    
+    // Allocate 1GB in VRAM
+    nearmem_region_t region;
+    nearmem_alloc(&ctx, &region, 1ULL << 30);
+    
+    // CPU can directly access GPU memory!
+    float *data = (float*)region.cpu_ptr;
+    for (int i = 0; i < 1000; i++) {
+        data[i] = i * 3.14f;
+    }
+    
+    // Sync to GPU
+    nearmem_sync(&ctx, NEARMEM_SYNC_CPU_TO_GPU);
+    
+    // Check memory location
+    if (nearmem_is_gpu_memory(data)) {
+        printf("Data is in GPU VRAM\n");
+    }
+    
+    // Cleanup
+    nearmem_free(&ctx, &region);
+    nearmem_shutdown(&ctx);
+    return 0;
+}
 ```
 
-### Sysfs Interface
+### C++ Example
 
-```bash
-# Runtime statistics
-cat /sys/bus/pci/devices/*/pseudoscopic/migrations_to_ram
-cat /sys/bus/pci/devices/*/pseudoscopic/page_faults
-cat /sys/bus/pci/devices/*/pseudoscopic/pool_free
+```cpp
+#include <nearmem/nearmem.hpp>
 
-# Device info
-cat /sys/bus/pci/devices/*/pseudoscopic/vram_size
-cat /sys/bus/pci/devices/*/pseudoscopic/mode
+int main() {
+    // RAII context - automatically cleans up
+    nearmem::Context ctx(0);  // GPU index 0
+    
+    // Typed allocation with usage hints
+    auto buffer = ctx.alloc<float>(1'000'000, 
+        nearmem::Usage::STREAMING | nearmem::Usage::GPU_ONLY);
+    
+    // Standard container-like access
+    buffer[0] = 3.14f;
+    buffer.fill(0.0f);
+    
+    // Range-based iteration
+    for (auto& val : buffer) {
+        val = 42.0f;
+    }
+    
+    // Explicit sync
+    buffer.sync_to_gpu();
+    
+    // Check location
+    if (buffer.is_gpu_memory()) {
+        std::cout << "Buffer is in VRAM\n";
+    }
+    
+    return 0;  // Automatic cleanup
+}
 ```
 
----
-
-## Performance Characteristics
-
-### Bandwidth
-
-| Operation | Measured | Theoretical |
-|-----------|----------|-------------|
-| Sequential write to VRAM | 12.4 GB/s | 15.75 GB/s |
-| Sequential read from VRAM | 11.8 GB/s | 15.75 GB/s |
-| Page migration (4KB) | 2.1 µs | — |
-| Page migration (2MB hugepage) | 180 µs | — |
-
-### Latency
-
-- **First access (cold)**: ~10-50 µs (migration overhead)
-- **Subsequent access (hot)**: ~100 ns (PCIe round-trip)
-- **System RAM baseline**: ~80 ns
-
-### When to Use This
-
-✅ **Good use cases:**
-- Memory-bound CPU workloads exceeding system RAM
-- Neural network inference where model weights fit in VRAM
-- Large dataset processing with streaming access patterns
-- Fast swap tier for memory-intensive development
-- Ramdisk for temporary high-speed storage
-
-❌ **Not ideal for:**
-- Random access patterns (PCIe latency dominates)
-- Latency-sensitive real-time applications
-- Workloads that should run on the GPU itself
-
----
-
-## The Architecture
-
-### Philosophy
-
-Three principles guide this implementation:
-
-1. **Minimal kernel surface area**: One module, clean init/exit paths
-2. **Assembly where it matters**: Cache control, memory barriers, bulk copy
-3. **Bulletproof error handling**: Every allocation checked, every path unwound
-
-### Bioluminescent Speed
-
-The hot paths are hand-written NASM, optimized for PCIe write-combining semantics:
-
-```nasm
-; Non-temporal stores bypass cache, coalesce into full PCIe transactions
-movntdq [rdi], xmm0        ; Fire and forget
-movntdq [rdi + 16], xmm1   ; No read-for-ownership
-movntdq [rdi + 32], xmm2   ; No cache pollution
-movntdq [rdi + 48], xmm3   ; Maximum bandwidth
-sfence                      ; Ensure completion
-```
-
-This achieves near-theoretical PCIe bandwidth by avoiding cache pollution and coalescing writes into full cache lines before posting to the bus.
-
-### Module Structure
-
-```
-pseudoscopic/
-├── src/
-│   ├── core/
-│   │   ├── module.c      # Entry, device selection, mode switching
-│   │   ├── bar.c         # PCIe BAR mapping (the airlock)
-│   │   ├── pool.c        # Bitmap allocator (the reservoir)
-│   │   └── block.c       # Block device interface (the maw)
-│   ├── hmm/
-│   │   ├── device.c      # ZONE_DEVICE registration
-│   │   ├── migrate.c     # Page migration (the currents)
-│   │   └── notifier.c    # MMU notifier (the tides)
-│   ├── dma/
-│   │   └── engine.c      # DMA engine wrapper
-│   └── asm/
-│       ├── memcpy_wc.asm # Write-combining optimized copy
-│       ├── cache_ops.asm # clflush/clflushopt/clwb
-│       └── barriers.asm  # Memory fence primitives
-└── include/pseudoscopic/
-    ├── pseudoscopic.h    # The abyssal chart
-    ├── hw.h              # Hardware register definitions
-    └── asm.h             # Assembly function declarations
-```
-
----
-
-## Part of Neural Splines
-
-Pseudoscopic is a component of [Neural Splines](https://neuralsplines.com)—research into geometric representations of neural networks.
-
-The insight: neural network weights aren't random numbers. They encode *structure*—relationships captured by geometric primitives. A NURBS surface defined by 52×52 control points can represent the learned manifold of an entire language model.
-
-This driver exists because inference on these compressed representations is memory-bound. When your model fits in 16GB of HBM2 that would otherwise sit idle, the asymmetry becomes opportunity.
-
----
-
-## Contributing
-
-We welcome contributions that maintain the project's principles:
-
-1. **Minimal**: Does this addition earn its complexity?
-2. **Elegant**: Is the code beautiful? Would you frame it?
-3. **Robust**: Does every path handle failure gracefully?
+### Compile with pkg-config
 
 ```bash
-# Before submitting
-make check         # Static analysis
-make DEBUG=1       # Build with symbols
+# C program
+gcc myprogram.c $(pkg-config --cflags --libs nearmem) -o myprogram
+
+# C++ program  
+g++ -std=c++17 myprogram.cpp $(pkg-config --cflags --libs nearmem) -o myprogram
 ```
 
----
+## Features
 
-## ⚠️ Advisory
+### Multi-GPU Support
 
-This driver operates in the abyssal zone of kernel memory management. Use on production systems with appropriate caution and testing.
+```c
+// Enumerate all GPUs
+int count = nearmem_gpu_count();
 
-- Always test on non-critical systems first
-- Monitor `dmesg` for warnings
-- The primary display protection exists for good reason
+for (int i = 0; i < count; i++) {
+    nearmem_gpu_info_t info;
+    nearmem_gpu_get_info(i, &info);
+    
+    printf("GPU %d: %s\n", i, info.name);
+    printf("  VRAM: %lu MB\n", info.vram_size >> 20);
+    printf("  BAR1: 0x%lx\n", info.bar1_base);
+    printf("  Device: %s\n", info.block_device);
+}
+```
 
----
+### Memory Location Detection
+
+```c
+void *ptr = some_allocation();
+
+switch (nearmem_get_memloc(ptr, NULL)) {
+    case MEMLOC_GPU_VRAM:
+        printf("Pointer is in GPU VRAM\n");
+        break;
+    case MEMLOC_CPU:
+        printf("Pointer is in system RAM\n");
+        break;
+    case MEMLOC_MAPPED:
+        printf("Pointer is memory-mapped\n");
+        break;
+}
+```
+
+### Usage-Based Allocation (C++)
+
+```cpp
+// Streaming workload (large sequential access)
+auto stream_buf = ctx.alloc<char>(1_GB, Usage::STREAMING);
+
+// Random access pattern  
+auto lookup_buf = ctx.alloc<Entry>(1_M, Usage::RANDOM);
+
+// Tiled computation
+auto tile_buf = ctx.alloc<float>(64*64, Usage::TILED);
+
+// Double-buffered pipeline
+auto ping = ctx.alloc<Data>(size, Usage::DOUBLE_BUF);
+auto pong = ctx.alloc<Data>(size, Usage::DOUBLE_BUF);
+```
+
+## Example Programs
+
+| Program | Description |
+|---------|-------------|
+| `log_analyzer` | Zero-copy grep on VRAM-resident logs |
+| `kv_cache_tier` | LLM KV-cache tiering to VRAM |
+| `tiled_convolution` | Image convolution with stencil halos |
+| `tiled_matmul` | Cache-blocked matrix multiplication |
+| `tiletrace` | Procedural ray-traced flight simulator |
+| `gpucpu_demo` | x86 emulation running on GPU |
+| `gpufpga_demo` | FPGA simulation with branchless LUTs |
+| `abyssal_demo` | Interactive circuit debugger |
+
+Run examples:
+```bash
+cd /usr/local/share/pseudoscopic/examples
+./abyssal_demo
+```
+
+## Requirements
+
+### Hardware
+- NVIDIA GPU with BAR1 aperture (most desktop/server GPUs)
+- Tested: Tesla P100, V100, A100, RTX 20xx/30xx/40xx
+
+### Software
+- Linux kernel 5.4+
+- GCC 7+ (matching kernel compiler for driver)
+- CUDA toolkit (optional, for GPU-side operations)
+
+### Compiler Compatibility
+
+The kernel module **must** be compiled with the same GCC major version as your kernel:
+
+```bash
+# Check kernel compiler
+cat /proc/version | grep -oP 'gcc[- ]version \K[0-9]+\.[0-9]+'
+
+# Install matching GCC if needed
+sudo apt install gcc-11
+```
+
+## Building from Source
+
+```bash
+# Full build (driver + library + examples)
+sudo ./setup.sh
+
+# Library only (no root required)
+./setup.sh --lib-only
+
+# Just the library with make
+cd contrib/nearmem
+make lib
+make examples
+```
+
+### Build Options
+
+```bash
+# Debug build
+make DEBUG=1 lib
+
+# With CUDA support (if toolkit available)
+make CUDA_PATH=/usr/local/cuda lib
+
+# Specific GCC version (for kernel module)
+make CC=gcc-11 lib
+```
+
+## API Reference
+
+### Core Functions
+
+```c
+// Initialization
+int nearmem_init(nearmem_ctx_t *ctx, const char *device, int flags);
+void nearmem_shutdown(nearmem_ctx_t *ctx);
+
+// Allocation
+int nearmem_alloc(nearmem_ctx_t *ctx, nearmem_region_t *region, size_t size);
+void nearmem_free(nearmem_ctx_t *ctx, nearmem_region_t *region);
+
+// Synchronization  
+int nearmem_sync(nearmem_ctx_t *ctx, int direction);
+```
+
+### GPU Functions
+
+```c
+// Enumeration
+int nearmem_gpu_count(void);
+int nearmem_gpu_enumerate(nearmem_gpu_info_t *infos, int max);
+int nearmem_gpu_get_info(int index, nearmem_gpu_info_t *info);
+
+// Memory location
+bool nearmem_is_gpu_memory(const void *ptr);
+uint64_t nearmem_gpu_get_vram_base(int gpu_index);
+uint64_t nearmem_gpu_get_vram_size(int gpu_index);
+```
+
+### Tiled Functions
+
+```c
+// Tile descriptor creation
+nearmem_tile_desc_t nearmem_tile_desc_1d(size_t total, size_t tile);
+nearmem_tile_desc_t nearmem_tile_desc_2d(size_t h, size_t w, size_t th, size_t tw);
+
+// Tile operations  
+int nearmem_tile_prefetch(nearmem_ctx_t *ctx, nearmem_region_t *r, int tile_idx);
+void *nearmem_tile_ptr(nearmem_region_t *region, int tile_idx);
+```
 
 ## License
 
-GPL v2, as required for Linux kernel modules.
+MIT License - see [LICENSE](LICENSE)
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing`)
+3. Commit changes (`git commit -am 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing`)
+5. Open a Pull Request
+
+## Citation
+
+If you use Pseudoscopic in research, please cite:
+
+```bibtex
+@software{pseudoscopic,
+  title = {Pseudoscopic: Near-Memory Computing via GPU VRAM},
+  author = {Neural Splines LLC},
+  year = {2025},
+  url = {https://github.com/neuralsplines/pseudoscopic}
+}
+```
 
 ---
 
-## Acknowledgments
-
-- The Linux kernel HMM developers for the infrastructure
-- NVIDIA for GPUs with reasonable BAR configurations  
-- The nouveau project for hardware documentation
-- Cookie Monster for the philosophy
-
----
-
-*"C is for cookie, that's good enough for me."*
-
-**Asymmetric solutions.**
-
-—Neural Splines Research, 2025
+*"The GPU is not an accelerator. The GPU IS the computer."* 🍪

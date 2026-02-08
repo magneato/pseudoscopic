@@ -63,6 +63,7 @@ int ps_pool_init(struct ps_device *dev)
     pool->free_pages = nr_pages;
 
     dev->pool = pool;
+    pool->dev = dev;
 
     ps_info(dev, "pool: initialized %lu pages (%lu KB bitmap)\n",
             nr_pages, bitmap_size >> 10);
@@ -148,7 +149,7 @@ struct page *ps_pool_alloc(struct ps_pool *pool)
      * This requires HMM registration to have completed first,
      * as pfn_to_page() needs valid struct page entries.
      */
-    dev = container_of(&pool, struct ps_device, pool);
+    dev = pool->dev;
     
     /* 
      * Walk back from pool to device via container_of
@@ -241,7 +242,7 @@ unsigned long ps_pool_free_count(struct ps_pool *pool)
  *
  * Returns: First page in range, or NULL if not available
  */
-static __maybe_unused struct page *ps_pool_alloc_range(struct ps_pool *pool,
+struct page *ps_pool_alloc_range(struct ps_pool *pool,
                                   unsigned long count,
                                   unsigned long *start_bit)
 {
@@ -276,7 +277,7 @@ static __maybe_unused struct page *ps_pool_alloc_range(struct ps_pool *pool,
     if (start_bit)
         *start_bit = bit;
 
-    dev = container_of(&pool, struct ps_device, pool);
+    dev = pool->dev;
     return pfn_to_page(dev->pfn_first + bit);
 }
 
@@ -286,7 +287,7 @@ static __maybe_unused struct page *ps_pool_alloc_range(struct ps_pool *pool,
  * @page: First page in range
  * @count: Number of pages to free
  */
-static __maybe_unused void ps_pool_free_range(struct ps_pool *pool, struct page *page,
+void ps_pool_free_range(struct ps_pool *pool, struct page *page,
                         unsigned long count)
 {
     struct ps_device *dev;

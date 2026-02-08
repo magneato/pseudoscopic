@@ -98,9 +98,10 @@ int ps_notifier_register(struct ps_context *ctx,
                          unsigned long start,
                          unsigned long size)
 {
+    struct ps_device *dev = ctx->dev;
     int ret;
     
-    ps_dbg(ctx->dev, "notifier: registering 0x%lx - 0x%lx\n",
+    ps_dbg(dev, "notifier: registering 0x%lx - 0x%lx\n",
            start, start + size);
     
     ret = mmu_interval_notifier_insert(&ctx->notifier,
@@ -109,7 +110,7 @@ int ps_notifier_register(struct ps_context *ctx,
                                        size,
                                        &ps_notifier_ops);
     if (ret) {
-        ps_warn(ctx->dev, "notifier: failed to register: %d\n", ret);
+        ps_warn(dev, "notifier: failed to register: %d\n", ret);
         return ret;
     }
     
