@@ -14,7 +14,7 @@
 #   - CUDA toolkit (optional, for GPU acceleration)
 #   - Root access for driver installation
 #
-# Copyright (C) 2025 Neural Splines LLC
+# Copyright (C) 2026 Neural Splines LLC
 # License: MIT
 #
 

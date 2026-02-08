@@ -11,7 +11,7 @@
 ;   CLFLUSHOPT - Skylake+ (more efficient, allows parallel execution)
 ;   CLWB       - Skylake-X, Ice Lake+ (writeback without invalidate)
 ;
-; Copyright (C) 2025 Neural Splines LLC
+; Copyright (C) 2026 Neural Splines LLC
 
 BITS 64
 DEFAULT REL

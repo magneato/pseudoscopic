@@ -7,7 +7,7 @@
  * state. Essential for correct operation when pages are
  * unmapped, migrated, or permissions change.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  */
 
 #include <linux/mmu_notifier.h>

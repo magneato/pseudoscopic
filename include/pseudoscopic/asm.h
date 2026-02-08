@@ -5,7 +5,7 @@
  * Defines the interface between C and hand-optimized NASM routines.
  * These functions handle performance-critical memory operations.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  */
 
 #ifndef _PSEUDOSCOPIC_ASM_H_

@@ -6,7 +6,7 @@
  * and publicly available documentation. We only define what
  * we actually use for BAR management.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  */
 
 #ifndef _PSEUDOSCOPIC_HW_H_

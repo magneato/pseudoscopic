@@ -1,7 +1,7 @@
 /*
  * nearmem_gpu.c - Multi-GPU Support and Memory Location Implementation
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 
@@ -38,6 +38,16 @@ typedef struct {
 
 static mmap_region_t g_mmap_regions[256];
 static int g_mmap_count = 0;
+
+/* Allocation tracking for free space calculation */
+typedef struct {
+    int gpu_index;
+    uint64_t offset;
+    uint64_t size;
+} alloc_entry_t;
+
+static alloc_entry_t g_alloc_entries[4096];
+static int g_alloc_count = 0;
 
 /*
  * ════════════════════════════════════════════════════════════════════════════
@@ -366,13 +376,46 @@ uint64_t nearmem_gpu_get_vram_size(int gpu_index) {
     return g_gpus[gpu_index].vram_size;
 }
 
+/* Track a new allocation */
+void nearmem_gpu_track_alloc(int gpu_index, uint64_t offset, uint64_t size) {
+    if (g_alloc_count >= 4096) return;
+    
+    g_alloc_entries[g_alloc_count].gpu_index = gpu_index;
+    g_alloc_entries[g_alloc_count].offset = offset;
+    g_alloc_entries[g_alloc_count].size = size;
+    g_alloc_count++;
+    
+    if (gpu_index >= 0 && gpu_index < g_gpu_count) {
+        g_gpus[gpu_index].vram_available -= size;
+    }
+}
+
+/* Remove allocation tracking */
+void nearmem_gpu_track_free(int gpu_index, uint64_t offset) {
+    for (int i = 0; i < g_alloc_count; i++) {
+        if (g_alloc_entries[i].gpu_index == gpu_index &&
+            g_alloc_entries[i].offset == offset) {
+            /* Restore available space */
+            if (gpu_index >= 0 && gpu_index < g_gpu_count) {
+                g_gpus[gpu_index].vram_available += g_alloc_entries[i].size;
+            }
+            /* Remove entry */
+            for (int j = i; j < g_alloc_count - 1; j++) {
+                g_alloc_entries[j] = g_alloc_entries[j + 1];
+            }
+            g_alloc_count--;
+            return;
+        }
+    }
+}
+
 uint64_t nearmem_gpu_get_vram_free(int gpu_index) {
     enumerate_gpus_internal();
     
     if (gpu_index < 0 || gpu_index >= g_gpu_count)
         return 0;
     
-    /* TODO: Track allocations to compute free space */
+    /* vram_available is now dynamically tracked via alloc/free */
     return g_gpus[gpu_index].vram_available;
 }
 
@@ -402,6 +445,15 @@ void *nearmem_gpu_offset_to_ptr(nearmem_ctx_t *ctx, uint64_t offset) {
  * ════════════════════════════════════════════════════════════════════════════
  */
 
+/* Check if P2P is available between two GPUs */
+static bool check_p2p_available(int gpu1, int gpu2) {
+    /* P2P requires both GPUs to be on same IOMMU group or have direct PCIe path */
+    /* For now, check if both GPUs support P2P flag */
+    if (gpu1 < 0 || gpu1 >= g_gpu_count || gpu2 < 0 || gpu2 >= g_gpu_count)
+        return false;
+    return g_gpus[gpu1].supports_p2p && g_gpus[gpu2].supports_p2p;
+}
+
 int nearmem_gpu_copy(int dst_gpu, uint64_t dst_offset,
                      int src_gpu, uint64_t src_offset,
                      size_t size) {
@@ -411,9 +463,37 @@ int nearmem_gpu_copy(int dst_gpu, uint64_t dst_offset,
         src_gpu < 0 || src_gpu >= g_gpu_count)
         return -1;
     
-    /* For now, stage through CPU memory */
-    /* TODO: Use P2P if available */
+    /* Try P2P copy if available - uses direct GPU-to-GPU transfer */
+    if (check_p2p_available(src_gpu, dst_gpu)) {
+        /* Attempt direct memory copy via mmap */
+        int src_fd = open(g_gpus[src_gpu].block_device, O_RDONLY);
+        int dst_fd = open(g_gpus[dst_gpu].block_device, O_RDWR);
+        
+        if (src_fd >= 0 && dst_fd >= 0) {
+            /* Map both regions */
+            void *src_map = mmap(NULL, size, PROT_READ, MAP_SHARED, src_fd, src_offset);
+            void *dst_map = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, dst_fd, dst_offset);
+            
+            if (src_map != MAP_FAILED && dst_map != MAP_FAILED) {
+                /* Direct copy - kernel may use P2P DMA */
+                memcpy(dst_map, src_map, size);
+                
+                munmap(src_map, size);
+                munmap(dst_map, size);
+                close(src_fd);
+                close(dst_fd);
+                return 0;
+            }
+            
+            if (src_map != MAP_FAILED) munmap(src_map, size);
+            if (dst_map != MAP_FAILED) munmap(dst_map, size);
+        }
+        if (src_fd >= 0) close(src_fd);
+        if (dst_fd >= 0) close(dst_fd);
+        /* Fall through to staging copy if P2P fails */
+    }
     
+    /* Fallback: stage through CPU memory */
     void *staging = malloc(size);
     if (!staging) return -1;
     

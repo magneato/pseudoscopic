@@ -29,7 +29,7 @@
  *
  * This lets you run 128K context on a machine with 64GB RAM + 16GB P100.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 

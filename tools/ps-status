@@ -6,7 +6,7 @@
 # Displays current state of the GPU VRAM driver including
 # memory usage, migration statistics, and device info.
 #
-# Copyright (C) 2025 Neural Splines LLC
+# Copyright (C) 2026 Neural Splines LLC
 
 set -e
 

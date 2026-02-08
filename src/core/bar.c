@@ -6,7 +6,7 @@
  * Tesla/Datacenter GPUs ship with Large BAR enabled, exposing
  * the full VRAM. Consumer GPUs may need resizing.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  */
 
 #include <linux/pci.h>

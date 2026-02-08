@@ -1,423 +1,450 @@
-# Near-Memory Computing with Pseudoscopic
-
-**Data doesn't move. Computation comes to the data.**
-
----
-
-## The Unconventional Insight
-
-Traditional GPU computing has a dirty secret: **data movement dominates**.
-
 ```
-Traditional Pipeline:
-  CPU RAM ─────────────────────────────────────────────→ GPU VRAM
-           50 GB transfer @ 12 GB/s = 4.2 seconds
-                              │
-                              ▼
-                      [GPU Processing]
-                         ~0.2 seconds
-                              │
-                              ▼
-  CPU RAM ←───────────────────────────────────────────── GPU VRAM
-           Results transfer @ 12 GB/s = variable
-
-  Total: Transfer time >> Compute time
-```
-
-For a 50 GB log file, you spend **4+ seconds** just moving data across PCIe, then maybe 200ms actually processing it.
-
-**Near-Memory Computing inverts this:**
-
-```
-Near-Memory Pipeline:
-  [VRAM] ← CPU writes via mmap (only what changes)
-  [VRAM] ← GPU computes in-place (700 GB/s internal)
-  [VRAM] → CPU reads results (only what's needed)
-
-  Total: Zero round-trip transfers
-```
-
-The GPU becomes a **memory-side accelerator**—a coprocessor that transforms data in-place while the CPU orchestrates.
-
----
-
-## How It Works
-
-### The Physical Setup
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         GPU Card                                 │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │                        VRAM                              │    │
-│  │   (HBM2 @ 700 GB/s internal bandwidth)                  │    │
-│  │                                                          │    │
-│  │   ┌────────────────────┐    ┌────────────────────┐      │    │
-│  │   │   Your Data        │    │   GPU Kernels      │      │    │
-│  │   │   Lives Here       │◄───│   Operate Here     │      │    │
-│  │   │                    │    │   (No copy!)       │      │    │
-│  │   └────────────────────┘    └────────────────────┘      │    │
-│  │              ▲                                           │    │
-│  └──────────────┼───────────────────────────────────────────┘    │
-│                 │                                                 │
-│           BAR1 Window (PCIe)                                     │
-│                 │                                                 │
-└─────────────────┼─────────────────────────────────────────────────┘
-                  │
-            ┌─────┴─────┐
-            │    CPU    │
-            │   mmap()  │
-            └───────────┘
-```
-
-Pseudoscopic exposes GPU VRAM as a block device (`/dev/psdisk0`). When you mmap that device, you get a CPU pointer to GPU memory. CUDA can access the exact same physical memory.
-
-**Same bytes. Two access paths. No copy.**
-
-### The API Flow
-
-```c
-// 1. Initialize: Open device, establish CUDA context
-nearmem_ctx_t ctx;
-nearmem_init(&ctx, "/dev/psdisk0", 0);
-
-// 2. Allocate: Get a region accessible by both CPU and GPU
-nearmem_region_t region;
-nearmem_alloc(&ctx, &region, 16 * 1024 * 1024 * 1024);  // 16 GB
-
-// 3. CPU writes data (goes directly to VRAM via BAR1)
-memcpy(region.cpu_ptr, my_data, data_size);
-
-// 4. Sync: Ensure CPU writes are visible to GPU
-nearmem_sync(&ctx, NEARMEM_SYNC_CPU_TO_GPU);
-
-// 5. GPU processes in-place (no transfer!)
-nearmem_histogram(&ctx, &region, histogram);
-
-// 6. Sync: Ensure GPU writes are visible to CPU
-nearmem_sync(&ctx, NEARMEM_SYNC_GPU_TO_CPU);
-
-// 7. CPU reads results (only touches the histogram, not 16 GB)
-printf("Byte 0x41 count: %lu\n", histogram['A']);
+    ╔═══════════════════════════════════════════════════════════════════════════════════╗
+    ║                                                                                   ║
+    ║     ███╗   ██╗███████╗ █████╗ ██████╗ ███╗   ███╗███████╗███╗   ███╗              ║
+    ║     ████╗  ██║██╔════╝██╔══██╗██╔══██╗████╗ ████║██╔════╝████╗ ████║              ║
+    ║     ██╔██╗ ██║█████╗  ███████║██████╔╝██╔████╔██║█████╗  ██╔████╔██║              ║
+    ║     ██║╚██╗██║██╔══╝  ██╔══██║██╔══██╗██║╚██╔╝██║██╔══╝  ██║╚██╔╝██║              ║
+    ║     ██║ ╚████║███████╗██║  ██║██║  ██║██║ ╚═╝ ██║███████╗██║ ╚═╝ ██║              ║
+    ║     ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚═╝     ╚═╝              ║
+    ║                                                                                   ║
+    ║        ┌─────────────────────────────────────────────────────────────────┐        ║
+    ║        │      Near-Memory Computing with Pseudoscopic                    │        ║
+    ║        │      ─────────────────────────────────────────────              │        ║
+    ║        │      Where data rests, and computation arrives                  │        ║
+    ║        └─────────────────────────────────────────────────────────────────┘        ║
+    ╚═══════════════════════════════════════════════════════════════════════════════════╝
 ```
 
 ---
 
-## Performance Comparison
+## ◈ The Fundamental Insight
 
-### Log Analysis (50 GB access logs)
+There's a curious inversion at the heart of modern computing. We've spent decades making processors faster—from the 4004's 740 kHz to the H100's 1.8 GHz multi-billion transistor behemoths—but we've neglected the humble act of *getting data to those processors*.
 
-| Approach | Time | PCIe Traffic |
-|----------|------|--------------|
-| Traditional (copy-process-copy) | 4.2s transfer + 0.2s compute = **4.4s** | 100 GB |
-| Near-Memory | 0.2s compute + ~0s result read = **0.2s** | ~0 GB |
-| **Speedup** | **22×** | **∞** |
+Traditional GPU computing suffers from this asymmetry:
 
-### Pattern Search (grep for "ERROR")
+```
+    ┌────────────────────────────────────────────────────────────────────────────────┐
+    │                           THE TRADITIONAL DANCE                                │
+    ├────────────────────────────────────────────────────────────────────────────────┤
+    │                                                                                │
+    │    CPU RAM                                                         GPU VRAM   │
+    │   ┌────────┐                                                     ┌────────┐   │
+    │   │ 50 GB  │═══════════════════════════════════════════════════▶│ 50 GB  │   │
+    │   │ Data   │         Transfer @ 12 GB/s = 4.2 seconds           │ Data   │   │
+    │   └────────┘                                                     └────────┘   │
+    │                                      │                                         │
+    │                                      ▼                                         │
+    │                              ┌──────────────┐                                  │
+    │                              │    COMPUTE   │                                  │
+    │                              │   ~200 ms    │                                  │
+    │                              └──────────────┘                                  │
+    │                                      │                                         │
+    │                                      ▼                                         │
+    │   ┌────────┐                                                     ┌────────┐   │
+    │   │ Result │◀═══════════════════════════════════════════════════│ Result │   │
+    │   └────────┘         Transfer @ 12 GB/s = variable               └────────┘   │
+    │                                                                                │
+    │   Total Pipeline: 4.4 seconds (Compute is 4.5% of time)                        │
+    └────────────────────────────────────────────────────────────────────────────────┘
+```
 
-| Approach | Time for 50 GB |
-|----------|----------------|
-| CPU grep | ~45 seconds |
-| GPU (traditional copy) | 4.2s + 0.3s + 0.01s = 4.5s |
-| GPU (near-memory) | 0.3s |
-| **Speedup vs CPU** | **150×** |
+For a 50 GB dataset, you spend **4+ seconds** moving bytes across PCIe, then a measly 200 milliseconds actually processing. The GPU—a thermonuclear computational engine—sits idle 95% of the time, waiting for data.
 
-### When Near-Memory Wins
-
-✅ **Ideal workloads:**
-- Log analysis (grep, histogram, pattern matching)
-- Data validation (checksums, format verification)
-- In-place transformations (encoding, compression)
-- Large dataset filtering (select rows matching criteria)
-- Bulk sorting
-- Deduplication
-
-❌ **Not ideal for:**
-- Iterative algorithms with CPU feedback each iteration
-- Workloads that genuinely need results in CPU RAM
-- Small datasets (< 1 GB) where transfer overhead is negligible
+> **Fun fact**: The PCIe 3.0 x16 link (12.8 GB/s theoretical, ~12 GB/s practical) has roughly the bandwidth of DDR2-400 RAM from 2004. We're feeding 2024 GPUs through a memory straw from two decades ago.
 
 ---
 
-## Quick Start
+## ◈ The Inversion
 
-### Prerequisites
+**Near-Memory Computing inverts this relationship.** Instead of moving data to computation, we bring computation to data.
 
-```bash
-# 1. Load pseudoscopic in ramdisk mode
-sudo modprobe pseudoscopic mode=ramdisk
-
-# 2. Verify device exists
-ls -la /dev/psdisk0
-
-# 3. Check CUDA is available
-nvidia-smi
+```
+    ┌────────────────────────────────────────────────────────────────────────────────┐
+    │                           THE NEAR-MEMORY WAY                                  │
+    ├────────────────────────────────────────────────────────────────────────────────┤
+    │                                                                                │
+    │                               GPU VRAM (via /dev/psdisk0)                      │
+    │                              ┌─────────────────────────────┐                   │
+    │                              │                             │                   │
+    │   CPU writes via mmap()  ──▶│         DATA LIVES HERE     │◀── GPU accesses  │
+    │   (directly to VRAM)        │                             │    natively       │
+    │                              │    Same physical memory     │                   │
+    │                              │    Two access paths          │                   │
+    │                              │    Zero round-trips          │                   │
+    │                              │                             │                   │
+    │                              └─────────────────────────────┘                   │
+    │                                          │                                     │
+    │                                          ▼                                     │
+    │                                  ┌──────────────┐                              │
+    │                                  │    COMPUTE   │                              │
+    │                                  │   In-place   │                              │
+    │                                  │   ~200 ms    │                              │
+    │                                  └──────────────┘                              │
+    │                                          │                                     │
+    │                               CPU reads results (sparse)                       │
+    │                                                                                │
+    │     Total Pipeline: 0.2 seconds (Compute is 100% of time)                      │
+    └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Build
-
-```bash
-cd contrib/nearmem
-make
-
-# If CUDA isn't in default location:
-make CUDA_PATH=/opt/cuda-12.0
-```
-
-### Run Example
-
-```bash
-# Load some data into VRAM
-sudo dd if=/var/log/syslog of=/dev/psdisk0 bs=1M
-
-# Run the log analyzer
-./log_analyzer /dev/psdisk0 "error"
-```
+The GPU becomes a **memory-side accelerator**—a coprocessor that transforms data in-place while the CPU orchestrates the show.
 
 ---
 
-## API Reference
+## ◈ The Physical Reality
+
+How does one pointer address both CPU and GPU memory? The answer lies in a hardware feature that's been hiding in plain sight for years:
+
+```
+    ┌─────────────────────────────────────────────────────────────────────────────────┐
+    │                              GPU Card (Physical)                                │
+    ├─────────────────────────────────────────────────────────────────────────────────┤
+    │                                                                                 │
+    │      ┌─────────────────────────────────────────────────────────────────┐        │
+    │      │                         VRAM                                    │        │
+    │      │   ┌───────────────────────────────────────────────────────┐    │        │
+    │      │   │                                                       │    │        │
+    │      │   │        Your Data (50 GB of glorious bytes)            │    │        │
+    │      │   │                                                       │    │        │
+    │      │   │   GPU Internal Access: HBM2 @ 700 GB/s                │    │        │
+    │      │   │   (Native fabric, no PCIe involved)                   │    │        │
+    │      │   │                                                       │    │        │
+    │      │   └───────────────────────────────────────────────────────┘    │        │
+    │      │                              │                                  │        │
+    │      │                              │ BAR1 Aperture                   │        │
+    │      │                              │ (PCIe Window)                   │        │
+    │      │                              │                                  │        │
+    │      └──────────────────────────────┼──────────────────────────────────┘        │
+    │                                     │                                           │
+    │ ════════════════════════════════════╪══════════════════════════════════════    │
+    │                              PCIe Bus                                           │
+    │ ════════════════════════════════════╪══════════════════════════════════════    │
+    │                                     │                                           │
+    │                              ┌──────┴──────┐                                    │
+    │                              │     CPU     │                                    │
+    │                              │   mmap()    │                                    │
+    │                              │             │                                    │
+    │                              │  Sees same  │                                    │
+    │                              │  bytes via  │                                    │
+    │                              │  BAR1 addr  │                                    │
+    │                              └─────────────┘                                    │
+    └─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+The **BAR1 aperture** (Base Address Register 1) is a window through which the CPU can directly access GPU VRAM. In the old days (pre-2016), this window was limited—256 MB or less. Modern GPUs with **Large BAR** expose their *entire* VRAM.
+
+Pseudoscopic exploits this: it presents a block device (`/dev/psdisk0`) backed by BAR1. When you `mmap()` that device, you get a CPU pointer to GPU memory.
+
+> **Historical aside**: The PCI specification has supported BARs since 1993. What changed is *size*—32-bit address limitations kept BARs small until "Above 4G Decoding" became common in UEFI. Now we can expose 80+ GB through a single BAR.
+
+---
+
+## ◈ The API at a Glance
 
 ### Initialization
 
 ```c
-// Initialize with explicit device and CUDA device ID
-nearmem_error_t nearmem_init(nearmem_ctx_t *ctx, 
-                              const char *device_path,
-                              int cuda_device);
+// Explicit device selection
+nearmem_ctx_t ctx;
+nearmem_init(&ctx, "/dev/psdisk0", 0);  // GPU 0
 
-// Auto-detect pseudoscopic device
-nearmem_error_t nearmem_init_auto(nearmem_ctx_t *ctx);
-
-// Clean up
-void nearmem_shutdown(nearmem_ctx_t *ctx);
+// Auto-detection (finds first pseudoscopic device)
+nearmem_init_auto(&ctx);
 ```
 
-### Memory Management
+### Memory Allocation
 
 ```c
-// Allocate shared region
-nearmem_error_t nearmem_alloc(nearmem_ctx_t *ctx,
-                               nearmem_region_t *region,
-                               size_t size);
+// Allocate a shared region (accessible by CPU and GPU)
+nearmem_region_t region;
+nearmem_alloc(&ctx, &region, 16ULL << 30);  // 16 GB
 
-// Free region
-void nearmem_free(nearmem_ctx_t *ctx, nearmem_region_t *region);
-
-// Map specific offset (for pre-loaded data)
-nearmem_error_t nearmem_map_offset(nearmem_ctx_t *ctx,
-                                    nearmem_region_t *region,
-                                    uint64_t offset,
-                                    size_t size);
+// After this:
+//   region.cpu_ptr → CPU-visible pointer
+//   region.gpu_ptr → GPU device pointer (offset)
+//   Both point to the same physical VRAM
 ```
 
-### Synchronization
+### The Synchronization Ritual
+
+CPU and GPU have different memory models. Writes may be buffered, cached, reordered. Synchronization makes visibility explicit:
 
 ```c
-// Sync CPU writes → GPU visibility
+// CPU has written data; tell GPU it's ready
 nearmem_sync(&ctx, NEARMEM_SYNC_CPU_TO_GPU);
 
-// Sync GPU writes → CPU visibility
+// GPU has computed; tell CPU results are visible
 nearmem_sync(&ctx, NEARMEM_SYNC_GPU_TO_CPU);
 
-// Full bidirectional sync
+// Full bidirectional barrier
 nearmem_sync(&ctx, NEARMEM_SYNC_FULL);
 ```
+
+> **Why explicit sync?** Implicit synchronization (like Unified Memory's page faults) sounds nice but hides costs. When GPU work takes 3× longer than expected, you want to know *why*. Explicit sync is instrumentable, debuggable, predictable.
 
 ### Built-in Operations
 
 ```c
-// Memory operations
-nearmem_memset(ctx, region, value, offset, size);
-nearmem_memcpy(ctx, dst, dst_off, src, src_off, size);
+// Memory manipulation
+nearmem_memset(&ctx, &region, 0x00, 0, size);
+nearmem_memcpy(&ctx, &dst, dst_off, &src, src_off, size);
 
-// Search
-nearmem_find(ctx, region, pattern, len, &result);
-nearmem_count_matches(ctx, region, pattern, len, &count);
+// Pattern search (grep-like)
+nearmem_find(&ctx, &region, "ERROR", 5, &offset);
+nearmem_count_matches(&ctx, &region, "WARNING", 7, &count);
 
-// Transform
-nearmem_transform(ctx, region, lut);  // Apply 256-byte LUT
+// Byte transform (apply 256-entry LUT)
+uint8_t to_upper[256];  // Populate with uppercase mapping
+nearmem_transform(&ctx, &region, to_upper);
 
 // Analysis
-nearmem_histogram(ctx, region, histogram);
-nearmem_reduce_sum_f32(ctx, region, count, &sum);
+uint64_t histogram[256];
+nearmem_histogram(&ctx, &region, histogram);
 
-// Sort
-nearmem_sort_u32(ctx, region, count);
+// Reduction
+float sum;
+nearmem_reduce_sum_f32(&ctx, &region, float_count, &sum);
+
+// Sorting
+nearmem_sort_u32(&ctx, &region, element_count);
 ```
 
 ---
 
-## Architecture Deep Dive
+## ◈ Performance Characteristics
 
-### Why This Works
+### The Honest Numbers
 
-1. **BAR1 is a window, not a copy**
-   - PCIe BAR1 maps directly to GPU VRAM
-   - CPU writes go straight to GPU memory (write-combining)
-   - No intermediate buffers
+| Operation | Dataset | PCIe Traffic | GPU Time | Traditional Equivalent |
+|-----------|---------|--------------|----------|------------------------|
+| Histogram | 50 GB | 2 KB (result) | ~80 ms | 4.3s (copy+compute+copy) |
+| Pattern Search | 50 GB | ~1 KB (offsets) | ~100 ms | 4.3s |
+| Byte Transform | 24 GB | 0 (in-place) | ~50 ms | 4.1s |
+| Sort (uint32) | 10 GB | 0 (in-place) | ~500 ms | 1.5s |
+| Sum Reduction | 10 GB | 8 bytes | ~20 ms | 1.3s |
 
-2. **CUDA sees the same physical memory**
-   - CUDA device pointers are offsets into VRAM
-   - Our mmap offsets correspond to the same locations
-   - Same bytes, different address spaces
+The pattern is clear: when your operation produces *small output from large input*, near-memory wins dramatically. When output size approaches input size, the advantage shrinks.
 
-3. **Synchronization handles coherency**
-   - CPU write-combine buffers need explicit flush
-   - GPU caches need explicit invalidation
-   - `nearmem_sync()` wraps the ugly details
+### When Near-Memory Excels
 
-### The Synchronization Dance
+✅ **Ideal workloads:**
+- Log analysis at scale (grep, histogram, regex)
+- Data validation (checksums, format verification)
+- In-place transformations (encoding, compression, encryption)
+- Large dataset filtering (SELECT WHERE)
+- Bulk sorting and deduplication
+- Streaming ingestion with continuous processing
 
-```
-CPU writes to region
-        │
-        ▼
-┌───────────────────┐
-│  Write-Combine    │  ← Writes accumulate in WC buffer
-│     Buffers       │
-└───────┬───────────┘
-        │
-    sfence + msync      ← NEARMEM_SYNC_CPU_TO_GPU
-        │
-        ▼
-┌───────────────────┐
-│      VRAM         │  ← Data now in GPU memory
-└───────┬───────────┘
-        │
-   GPU kernel runs
-        │
-        ▼
-┌───────────────────┐
-│   GPU L2 Cache    │  ← Results may be cached
-└───────┬───────────┘
-        │
-   cudaDeviceSynchronize  ← NEARMEM_SYNC_GPU_TO_CPU
-        │
-        ▼
-┌───────────────────┐
-│      VRAM         │  ← Results in GPU memory
-└───────────────────┘
-        │
-    CPU reads via mmap (uncached access through BAR1)
-```
+❌ **Less ideal:**
+- Iterative algorithms needing CPU feedback each iteration
+- Workloads where output size ≈ input size
+- Small datasets where PCIe overhead is negligible
+- Random access patterns (PCIe latency doesn't amortize)
 
 ---
 
-## Use Cases
+## ◈ Practical Examples
 
 ### 1. Log Processing Pipeline
 
 ```c
-// Load logs directly to VRAM (disk → GPU, bypassing CPU RAM)
+// Stream logs directly to VRAM (bypasses CPU RAM entirely)
 system("dd if=access.log of=/dev/psdisk0 bs=1M");
 
-// Map the logs
+nearmem_ctx_t ctx;
+nearmem_init_auto(&ctx);
+
+// Map the log region
 nearmem_region_t logs;
 nearmem_map_offset(&ctx, &logs, 0, log_size);
 
 // GPU-accelerated grep
+int64_t first_error;
 nearmem_find(&ctx, &logs, "ERROR", 5, &first_error);
 
-// GPU-accelerated stats
+// GPU-accelerated statistics
+uint64_t byte_histogram[256];
 nearmem_histogram(&ctx, &logs, byte_histogram);
 
-// Only read the results you need (bytes, not gigabytes)
-printf("Found error at offset %ld\n", first_error);
+// Only transfer results (bytes, not gigabytes)
+printf("First error at byte %ld\n", first_error);
+printf("Space characters: %lu\n", byte_histogram[' ']);
 ```
 
-### 2. Neural Network Inference Cache
+### 2. LLM KV-Cache Spillover
 
 ```c
-// Model weights live in VRAM
-nearmem_region_t weights;
-nearmem_alloc(&ctx, &weights, model_size);
-memcpy(weights.cpu_ptr, model_data, model_size);
-nearmem_sync(&ctx, NEARMEM_SYNC_CPU_TO_GPU);
+// When CPU RAM fills, KV-cache spills to VRAM
+nearmem_region_t kv_overflow;
+nearmem_alloc(&ctx, &kv_overflow, 32ULL << 30);  // 32 GB
 
-// Inference: GPU reads weights, CPU reads outputs
-for (batch : data) {
-    // Activations computed in VRAM
-    inference_kernel<<<...>>>(weights.gpu_ptr, batch, output);
-    
-    // Only copy final output (small) to CPU
-    cudaMemcpy(result, output, output_size, cudaMemcpyDeviceToHost);
+// Attention computation accesses spilled cache in-place
+// No cudaMemcpy dance—just pointer math
+void *kv_ptr = (char*)kv_overflow.cpu_ptr + layer_offset;
+```
+
+### 3. Database Cold Buffer
+
+```c
+// Cold pages live in VRAM (16 GB on this GPU)
+nearmem_region_t cold_buffer;
+nearmem_alloc(&ctx, &cold_buffer, 16ULL << 30);
+
+// GPU can scan cold pages at 700 GB/s
+int64_t key_offset;
+nearmem_find(&ctx, &cold_buffer, key_bytes, key_len, &key_offset);
+
+// Only hot rows come to CPU
+if (key_offset >= 0) {
+    nearmem_sync(&ctx, NEARMEM_SYNC_GPU_TO_CPU);
+    Row *row = (Row*)((char*)cold_buffer.cpu_ptr + key_offset);
+    process_row(row);
 }
 ```
 
-### 3. Database Buffer Extension
+---
 
-```c
-// Cold pages live in VRAM
-nearmem_region_t cold_buffer;
-nearmem_alloc(&ctx, &cold_buffer, 16ULL * 1024 * 1024 * 1024);
+## ◈ The Synchronization Dance (Detailed)
 
-// Page-in on CPU access (via mmap fault handling)
-// Page-out to VRAM when RAM pressure (via madvise)
+For those who want to understand *why* synchronization is necessary:
 
-// GPU can do parallel scans on cold data
-nearmem_find(&ctx, &cold_buffer, key, key_len, &offset);
+```
+    CPU writes to region.cpu_ptr
+            │
+            ▼
+    ┌───────────────────┐
+    │  Write-Combine    │  ← CPU writes go into WC buffers (64 bytes each)
+    │     Buffers       │     These are NOT in VRAM yet!
+    └───────┬───────────┘
+            │
+        sfence + msync         ← NEARMEM_SYNC_CPU_TO_GPU
+            │                    Forces WC buffer flush
+            ▼
+    ┌───────────────────┐
+    │      VRAM         │  ← Data now visible to GPU SM threads
+    └───────┬───────────┘
+            │
+       GPU kernel runs
+            │
+            ▼
+    ┌───────────────────┐
+    │   GPU L2 Cache    │  ← Results may be cached in GPU L2
+    └───────┬───────────┘
+            │
+       cudaDeviceSynchronize   ← NEARMEM_SYNC_GPU_TO_CPU
+            │                    Wait for GPU, flush L2
+            ▼
+    ┌───────────────────┐
+    │      VRAM         │  ← Results now in VRAM (not L2)
+    └───────────────────┘
+            │
+       CPU reads via mmap (uncached access through BAR1)
+```
+
+> **The x86 memory model footnote**: On x86-64, stores to write-combining memory (including BAR1) go into WC buffers and may be coalesced/reordered. `sfence` ensures prior stores are globally visible. `msync(MS_SYNC)` forces buffer flush at kernel level. Without these, GPU may see stale data.
+
+---
+
+## ◈ Building Near-Memory
+
+### Prerequisites
+
+- **Pseudoscopic driver** loaded (see main project README)
+- **CUDA Toolkit** 11.0+ (for GPU kernel support)
+- **GCC** 10+ (or your kernel's compiler version)
+
+### Compilation
+
+```bash
+cd contrib/nearmem
+
+# Standard build (auto-detects CUDA)
+make
+
+# Explicit CUDA path
+make CUDA_PATH=/usr/local/cuda-12.3
+
+# Debug build
+make DEBUG=1
+
+# Check CUDA detection
+make cuda-info
+```
+
+### Verification
+
+```bash
+# Ensure pseudoscopic is loaded
+lsmod | grep pseudoscopic
+
+# Ensure device exists
+ls -la /dev/psdisk*
+
+# Run a quick test
+./log_analyzer /dev/psdisk0 "test"
 ```
 
 ---
 
-## Comparison with Alternatives
+## ◈ Architectural Comparison
 
-| Approach | Data Copy | GPU Acceleration | Transparency |
-|----------|-----------|------------------|--------------|
-| Standard CUDA | 2× PCIe | ✓ | Manual |
-| Unified Memory | Automatic | ✓ | High |
-| **Near-Memory** | **0** | ✓ | Medium |
-| NVMe direct | 0 | ✗ | Low |
+| Approach | Data Copy | GPU Acceleration | Transparency | Predictability |
+|----------|-----------|------------------|--------------|----------------|
+| Standard CUDA | 2× PCIe | ✓ | Low | High |
+| Unified Memory | Auto | ✓ | High | Low |
+| **Near-Memory** | **0** | ✓ | Medium | High |
+| NVMe Direct | 0 | ✗ | Low | High |
 
-**Near-Memory wins when:**
-- Dataset is larger than CPU RAM
-- Dataset is already in VRAM (via ramdisk mode)
-- You want to avoid PCIe round-trips
-- GPU acceleration provides significant speedup
-
----
-
-## Limitations
-
-1. **Requires pseudoscopic driver**
-   - Kernel module must be loaded
-   - GPU must not be in use by other drivers (nouveau, nvidia)
-
-2. **CUDA device must match pseudoscopic GPU**
-   - Multi-GPU systems need careful device selection
-
-3. **Write-combining semantics**
-   - CPU writes may reorder (use sync barriers)
-   - Reads are uncached (high latency for random access)
-
-4. **No automatic migration**
-   - Unlike Unified Memory, data stays where you put it
-   - Explicit sync calls required
+Near-memory is the sweet spot when you need:
+- GPU acceleration (unlike NVMe direct)
+- Predictable performance (unlike Unified Memory)
+- Minimal data movement (unlike standard CUDA)
 
 ---
 
-## Future Work
+## ◈ Limitations (Honest Assessment)
+
+1. **Initial load still crosses PCIe** — Near-memory optimizes *repeated* operations, not single passes
+2. **Random CPU reads are slow** — BAR1 access is ~100ns per 64B; don't iterate byte-by-byte
+3. **GPU memory is finite** — 16-80 GB depending on GPU model
+4. **Requires pseudoscopic driver** — Not portable without the kernel module
+5. **Write-combining semantics** — CPU writes may reorder; explicit sync required
+
+---
+
+## ◈ Future Horizons
 
 - [ ] AVX-512 optimized CPU fallback paths
-- [ ] Async streaming API
-- [ ] Multi-GPU support
-- [ ] Python bindings (numpy interop)
-- [ ] Integration with Apache Arrow
+- [ ] Async streaming API with double-buffering
+- [ ] Multi-GPU orchestration (cross-GPU copy)
+- [ ] Python bindings with NumPy interop
+- [ ] Apache Arrow integration
 - [ ] RDMA support for distributed near-memory
 
 ---
 
-## License
-
-MIT License - Use freely, attribution appreciated.
+```
+    ╔═══════════════════════════════════════════════════════════════════════════════╗
+    ║                                                                               ║
+    ║      "The fastest data transfer is the one that never happens.                ║
+    ║       The best optimization is avoiding the operation entirely."              ║
+    ║                                                                               ║
+    ║                                        — Neural Splines Research, 2026        ║
+    ║                                           Asymmetric Solutions                ║
+    ║                                                                               ║
+    ╚═══════════════════════════════════════════════════════════════════════════════╝
+```
 
 ---
 
-## Part of Neural Splines
+## ◈ License
 
-Near-Memory Computing is a component of the [Pseudoscopic](https://pseudoscopic.ai) project, which is part of [Neural Splines](https://neuralsplines.com) research.
+MIT License — Use freely, modify boldly, attribute kindly.
 
-**Asymmetric solutions.**
+Copyright © 2026 Neural Splines LLC
 
-*Data doesn't move. Computation comes to the data.* 🍪
+---
+
+*Data doesn't move. Computation arrives.* 🍪

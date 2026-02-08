@@ -9,7 +9,7 @@
  *   - /dev/psdiskN in ramdisk mode (general purpose)
  *   - /dev/pswapN in swap mode (optimized for page-sized I/O)
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  */
 
 #include <linux/blk-mq.h>

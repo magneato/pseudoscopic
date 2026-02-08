@@ -464,7 +464,7 @@
  * 🍪 Cookie Monster's Unified Theory of Computing:
  *    "Me realize: there is no hardware, only software running on physics."
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 
@@ -867,53 +867,302 @@ void gpufpga_builder_free(gpufpga_builder_t *b);
 
 /*
  * ════════════════════════════════════════════════════════════════════════════
- * CUDA KERNEL INTERFACE
+ * THERMAL MANAGEMENT SYSTEM
  * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Accurate chip simulation requires thermal modeling. Every switching event
+ * generates heat, and accumulated heat affects performance (thermal throttling)
+ * and reliability. This system models:
+ *
+ *   1. Dynamic Power: P_dyn = α × C × V² × f × N
+ *      where α = activity factor (switching rate)
+ *      C = capacitance, V = voltage, f = frequency, N = transistor count
+ *
+ *   2. Static Power: P_static = V × I_leak (temperature dependent)
+ *
+ *   3. Heat Transfer: Newton's law of cooling
+ *      dT/dt = (P_total - h×A×(T - T_ambient)) / (m×c)
+ *
+ *   4. Thermal Zones: Different regions can have different temperatures
  */
 
-#ifdef __CUDACC__
+/* Thermal parameters for realistic simulation */
+typedef struct {
+    float ambient_temp_c;       /* Ambient temperature (°C) */
+    float thermal_resistance;   /* Thermal resistance (°C/W) */
+    float thermal_capacitance;  /* Thermal capacitance (J/°C) */
+    float max_junction_temp;    /* Maximum junction temperature (°C) */
+    float throttle_temp;        /* Temperature at which throttling begins */
+    float shutdown_temp;        /* Emergency shutdown temperature */
+    
+    /* Power model parameters */
+    float voltage;              /* Supply voltage (V) */
+    float base_frequency_mhz;   /* Base clock frequency (MHz) */
+    float lut_capacitance_pf;   /* Capacitance per LUT (pF) */
+    float ff_capacitance_pf;    /* Capacitance per FF (pF) */
+    float static_power_mw;      /* Static power (mW) */
+    
+    /* Cooling model */
+    float heatsink_area_cm2;    /* Heatsink surface area */
+    float convection_coeff;     /* Heat transfer coefficient (W/m²·K) */
+} gpufpga_thermal_params_t;
+
+/* Default thermal parameters for typical FPGA */
+#define GPUFPGA_THERMAL_DEFAULTS { \
+    .ambient_temp_c = 25.0f, \
+    .thermal_resistance = 1.5f, \
+    .thermal_capacitance = 0.8f, \
+    .max_junction_temp = 125.0f, \
+    .throttle_temp = 95.0f, \
+    .shutdown_temp = 110.0f, \
+    .voltage = 0.9f, \
+    .base_frequency_mhz = 100.0f, \
+    .lut_capacitance_pf = 0.5f, \
+    .ff_capacitance_pf = 0.2f, \
+    .static_power_mw = 500.0f, \
+    .heatsink_area_cm2 = 100.0f, \
+    .convection_coeff = 25.0f \
+}
+
+/* Thermal zone for spatial temperature modeling */
+typedef struct {
+    uint32_t lut_start, lut_end;    /* LUTs in this zone */
+    uint32_t ff_start, ff_end;      /* FFs in this zone */
+    float temperature_c;             /* Current temperature */
+    float power_mw;                  /* Power dissipation */
+    uint64_t switch_count;           /* Switching events this cycle */
+    float activity_factor;           /* Rolling average activity */
+} gpufpga_thermal_zone_t;
+
+/* Thermal simulation state */
+typedef struct {
+    gpufpga_thermal_params_t params;
+    gpufpga_thermal_zone_t *zones;
+    uint32_t num_zones;
+    
+    /* Per-element activity tracking */
+    uint8_t *lut_prev_output;       /* Previous LUT outputs for activity */
+    uint8_t *ff_prev_state;         /* Previous FF states for activity */
+    
+    /* Global thermal state */
+    float junction_temp_c;          /* Overall junction temperature */
+    float total_power_mw;           /* Total power consumption */
+    float throttle_factor;          /* 1.0 = full speed, <1.0 = throttled */
+    bool thermal_shutdown;          /* Emergency shutdown triggered */
+    
+    /* Statistics */
+    uint64_t total_switches;        /* Total switching events */
+    float peak_temperature_c;       /* Maximum observed temperature */
+    float avg_power_mw;             /* Average power consumption */
+    uint64_t throttle_cycles;       /* Cycles spent throttled */
+} gpufpga_thermal_state_t;
+
+/* Thermal management API */
+int gpufpga_thermal_init(gpufpga_ctx_t *ctx, const gpufpga_thermal_params_t *params);
+void gpufpga_thermal_shutdown(gpufpga_ctx_t *ctx);
+void gpufpga_thermal_step(gpufpga_ctx_t *ctx);
+float gpufpga_thermal_get_temperature(gpufpga_ctx_t *ctx);
+float gpufpga_thermal_get_power(gpufpga_ctx_t *ctx);
+bool gpufpga_thermal_is_throttled(gpufpga_ctx_t *ctx);
+void gpufpga_thermal_print_stats(gpufpga_ctx_t *ctx);
 
 /*
- * fpga_eval_luts_kernel - Evaluate all LUTs in parallel
+ * ════════════════════════════════════════════════════════════════════════════
+ * VERILOG/VHDL HDL PARSER
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Load hardware designs directly from Verilog or VHDL source files.
+ * Supports a synthesizable subset suitable for FPGA simulation:
+ *
+ * Supported Verilog constructs:
+ *   - module/endmodule definitions
+ *   - input/output/wire/reg declarations
+ *   - assign statements (combinational logic)
+ *   - always @(posedge clk) blocks (sequential logic)
+ *   - Basic operators: &, |, ^, ~, +, -, *, ?, :
+ *   - if/else, case statements
+ *   - Parameterized modules
+ *
+ * Supported VHDL constructs:
+ *   - entity/architecture definitions
+ *   - signal declarations
+ *   - concurrent signal assignments
+ *   - process blocks with sensitivity lists
+ *   - Basic operators and functions
+ *
+ * The parser performs:
+ *   1. Lexing and parsing to AST
+ *   2. Elaboration (parameter substitution, generate blocks)
+ *   3. Technology mapping to LUT/FF primitives
+ *   4. Netlist optimization (constant propagation, dead code removal)
+ *   5. Levelization for efficient simulation
  */
-__global__ void fpga_eval_luts_kernel(
-    const gpufpga_lut_t *luts,
-    int num_luts,
-    const uint8_t *wire_state,
-    uint8_t *wire_next);
+
+/* HDL language type */
+typedef enum {
+    GPUFPGA_HDL_VERILOG,        /* Verilog-2001 subset */
+    GPUFPGA_HDL_SYSTEMVERILOG,  /* SystemVerilog subset */
+    GPUFPGA_HDL_VHDL,           /* VHDL-93 subset */
+    GPUFPGA_HDL_AUTO            /* Auto-detect from file extension */
+} gpufpga_hdl_lang_t;
+
+/* HDL compilation options */
+typedef struct {
+    gpufpga_hdl_lang_t language;
+    const char *top_module;         /* Top-level module name (NULL = auto) */
+    const char **include_paths;     /* Include search paths */
+    uint32_t num_include_paths;
+    const char **defines;           /* Preprocessor defines (NAME=VALUE) */
+    uint32_t num_defines;
+    
+    /* Optimization options */
+    bool optimize_constants;        /* Propagate constant values */
+    bool optimize_dead_code;        /* Remove unused logic */
+    bool optimize_retiming;         /* Move FFs for better timing */
+    uint8_t lut_size;               /* Target LUT size (4 or 6) */
+    
+    /* Debug options */
+    bool keep_hierarchy;            /* Preserve module hierarchy */
+    bool generate_debug_info;       /* Include source location mapping */
+    int verbosity;                  /* 0=quiet, 1=normal, 2=verbose */
+} gpufpga_hdl_options_t;
+
+/* Default HDL compilation options */
+#define GPUFPGA_HDL_OPTIONS_DEFAULT { \
+    .language = GPUFPGA_HDL_AUTO, \
+    .top_module = NULL, \
+    .include_paths = NULL, \
+    .num_include_paths = 0, \
+    .defines = NULL, \
+    .num_defines = 0, \
+    .optimize_constants = true, \
+    .optimize_dead_code = true, \
+    .optimize_retiming = false, \
+    .lut_size = 4, \
+    .keep_hierarchy = false, \
+    .generate_debug_info = true, \
+    .verbosity = 1 \
+}
+
+/* HDL compilation result */
+typedef struct {
+    bool success;
+    uint32_t num_errors;
+    uint32_t num_warnings;
+    char **error_messages;
+    char **warning_messages;
+    
+    /* Statistics */
+    uint32_t input_lines;           /* Source lines processed */
+    uint32_t num_modules;           /* Modules in design */
+    uint32_t num_instances;         /* Module instances */
+    double compile_time_ms;         /* Compilation time */
+    
+    /* Mapping statistics */
+    uint32_t luts_generated;
+    uint32_t ffs_generated;
+    uint32_t wires_generated;
+    uint8_t max_comb_depth;         /* Maximum combinational depth */
+} gpufpga_hdl_result_t;
+
+/* Port mapping for testbench integration */
+typedef struct {
+    const char *name;       /* Port name from HDL */
+    int port_id;            /* Assigned port ID */
+    int width;              /* Bit width */
+    bool is_input;          /* Direction */
+} gpufpga_port_map_t;
 
 /*
- * fpga_eval_luts_leveled_kernel - Evaluate LUTs level by level
+ * gpufpga_load_verilog - Load circuit from Verilog source
+ *
+ * @ctx: Simulator context
+ * @filename: Verilog source file path
+ * @options: Compilation options (NULL for defaults)
+ * @result: Compilation result (optional, can be NULL)
+ *
+ * Returns: 0 on success, negative error code on failure
  */
-__global__ void fpga_eval_luts_leveled_kernel(
-    const gpufpga_lut_t *luts,
-    const uint32_t *level_starts,
-    int num_levels,
-    uint8_t *wire_state);
+int gpufpga_load_verilog(gpufpga_ctx_t *ctx,
+                          const char *filename,
+                          const gpufpga_hdl_options_t *options,
+                          gpufpga_hdl_result_t *result);
 
 /*
- * fpga_update_ffs_kernel - Update all flip-flops
+ * gpufpga_load_vhdl - Load circuit from VHDL source
  */
-__global__ void fpga_update_ffs_kernel(
-    const gpufpga_ff_t *ffs,
-    int num_ffs,
-    uint8_t *wire_state,
-    uint8_t *ff_state,
-    int clock_edge);
+int gpufpga_load_vhdl(gpufpga_ctx_t *ctx,
+                       const char *filename,
+                       const gpufpga_hdl_options_t *options,
+                       gpufpga_hdl_result_t *result);
 
 /*
- * fpga_capture_waveform_kernel - Capture wire state for waveform
+ * gpufpga_load_hdl_multi - Load circuit from multiple HDL files
+ *
+ * Supports mixed Verilog/VHDL designs with proper module resolution.
  */
-__global__ void fpga_capture_waveform_kernel(
-    const uint8_t *wire_state,
-    int num_wires,
-    uint8_t *waveform,
-    int cycle);
+int gpufpga_load_hdl_multi(gpufpga_ctx_t *ctx,
+                            const char **filenames,
+                            uint32_t num_files,
+                            const gpufpga_hdl_options_t *options,
+                            gpufpga_hdl_result_t *result);
 
-#endif /* __CUDACC__ */
+/*
+ * gpufpga_get_port_map - Get I/O port mapping from loaded HDL
+ *
+ * After loading HDL, use this to discover the available ports
+ * for testbench integration.
+ */
+int gpufpga_get_port_map(gpufpga_ctx_t *ctx,
+                          gpufpga_port_map_t **ports,
+                          uint32_t *num_ports);
+
+/*
+ * gpufpga_find_port - Find port by name
+ */
+int gpufpga_find_port(gpufpga_ctx_t *ctx, const char *name);
+
+/*
+ * gpufpga_free_result - Free compilation result resources
+ */
+void gpufpga_free_result(gpufpga_hdl_result_t *result);
+
+/*
+ * gpufpga_save_vcd - Save waveform as Value Change Dump
+ *
+ * Standard VCD format compatible with GTKWave and other viewers.
+ * When compiled from HDL, uses original signal names.
+ */
+int gpufpga_save_vcd(gpufpga_ctx_t *ctx, const char *filename);
+
+/*
+ * ════════════════════════════════════════════════════════════════════════════
+ * TIMING ANALYSIS
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Static timing analysis for the emulated design.
+ */
+
+typedef struct {
+    float setup_time_ns;        /* Setup time requirement */
+    float hold_time_ns;         /* Hold time requirement */
+    float clock_to_q_ns;        /* Clock-to-Q delay */
+    float lut_delay_ns;         /* LUT propagation delay */
+    float routing_delay_ns;     /* Average routing delay */
+    float max_frequency_mhz;    /* Maximum achievable frequency */
+    
+    /* Critical path information */
+    wire_id_t *critical_path;   /* Wire IDs on critical path */
+    uint32_t critical_path_len;
+    float critical_path_ns;     /* Critical path delay */
+} gpufpga_timing_t;
+
+int gpufpga_analyze_timing(gpufpga_ctx_t *ctx, gpufpga_timing_t *timing);
+void gpufpga_free_timing(gpufpga_timing_t *timing);
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* _GPUFPGA_H_ */
+

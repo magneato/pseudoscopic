@@ -23,7 +23,7 @@
  *
  * For N = 10KB results: 550 GB vs 50.1 GB = 11x less PCIe traffic
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  */
 
 #include <stdio.h>

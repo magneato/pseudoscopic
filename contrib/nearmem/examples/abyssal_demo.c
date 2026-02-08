@@ -32,7 +32,7 @@
  *   ?                  - Show help
  *   q                  - Quit
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 

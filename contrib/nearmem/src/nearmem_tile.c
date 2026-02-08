@@ -12,7 +12,7 @@
  * into buffer B. When compute finishes, we swap and repeat.
  * This hides memory latency behind compute.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 

@@ -38,7 +38,7 @@
  *       nm_tile_commit(&iter);
  *   }
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 

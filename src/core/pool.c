@@ -12,7 +12,7 @@
  *   - Trivial leak detection (just count set bits)
  *   - Easy bulk allocation via bitmap operations
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  */
 
 #include <linux/bitmap.h>

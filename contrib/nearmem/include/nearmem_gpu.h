@@ -7,7 +7,7 @@
  *   - GPU RAM base address retrieval
  *   - Memory region attributes
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 

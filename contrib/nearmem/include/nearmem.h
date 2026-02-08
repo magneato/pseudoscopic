@@ -18,7 +18,7 @@
  * The GPU becomes a "memory-side accelerator" - a coprocessor that
  * transforms data in-place while CPU orchestrates.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT (permissive, for maximum adoption)
  */
 

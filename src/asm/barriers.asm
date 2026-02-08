@@ -11,7 +11,7 @@
 ; These are thin wrappers that can be inlined, but having
 ; them as functions aids debugging and profiling.
 ;
-; Copyright (C) 2025 Neural Splines LLC
+; Copyright (C) 2026 Neural Splines LLC
 
 BITS 64
 DEFAULT REL

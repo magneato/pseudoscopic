@@ -19,7 +19,7 @@
  *   buffer[0] = 3.14f;
  *   buffer.sync_to_gpu();
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 

@@ -10,7 +10,7 @@
 ; the cache hierarchy entirely, eliminating read-for-ownership
 ; overhead and cache pollution.
 ;
-; Copyright (C) 2025 Neural Splines LLC
+; Copyright (C) 2026 Neural Splines LLC
 ; Author: Robert L. Sitton, Jr.
 ;
 ; "C is for cookie, that's good enough for me."

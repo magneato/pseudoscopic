@@ -3,7 +3,7 @@
  *
  * "In darkness, we find clarity. In silence, we hear the signals."
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 

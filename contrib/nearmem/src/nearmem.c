@@ -4,7 +4,7 @@
  * The magic trick: CPU writes to BAR1, GPU reads from VRAM.
  * Same physical memory. Different access paths. No copy.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 
@@ -66,12 +66,23 @@ typedef struct {
     uint64_t gpu_time_us;
 } nearmem_stats_t;
 
+/* container_of macro for safe casting from public to internal context */
+#define container_of(ptr, type, member) \
+    ((type *)((char *)(ptr) - offsetof(type, member)))
+
 /* Extended context with internal state */
 typedef struct {
-    nearmem_ctx_t   public;
+    nearmem_ctx_t   public;     /* Must be first member for direct cast */
     nearmem_stats_t stats;
     uint64_t        alloc_offset;   /* Simple bump allocator */
 } nearmem_ctx_internal_t;
+
+/* Safe accessor for internal context from public context */
+static inline nearmem_ctx_internal_t *get_internal_ctx(nearmem_ctx_t *ctx) {
+    /* Since 'public' is first member, we can directly cast */
+    return (nearmem_ctx_internal_t *)ctx;
+}
+
 
 /*
  * Error strings
@@ -360,7 +371,7 @@ nearmem_error_t nearmem_alloc(nearmem_ctx_t *ctx,
     aligned_size = (size + 4095) & ~4095UL;
     
     /* Simple bump allocator (for prototype) */
-    ictx = (nearmem_ctx_internal_t*)ctx;  /* FIXME: proper container_of */
+    ictx = get_internal_ctx(ctx);
     offset = ictx->alloc_offset;
     
     if (offset + aligned_size > ctx->ps_size)

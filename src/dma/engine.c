@@ -10,7 +10,7 @@
  * initialization that varies by architecture. This is
  * a simplified implementation that focuses on correctness.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  */
 
 #include <linux/dma-mapping.h>

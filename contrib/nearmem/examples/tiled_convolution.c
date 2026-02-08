@@ -27,7 +27,7 @@
  *   Total tiles: ~9,500
  *   Memory needed: ~8 MB (double buffer) vs 40 GB
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 

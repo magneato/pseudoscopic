@@ -255,7 +255,7 @@
  *    "Me not need expensive computer. Me just need cookie."
  *    (Where cookie = GPU + pseudoscopic + neural splines)
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 

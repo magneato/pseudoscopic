@@ -5,7 +5,7 @@
  * The bridge between pseudoscopic and CUDA.
  * Data lives in VRAM. We just visit.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  */
 
 #define _GNU_SOURCE

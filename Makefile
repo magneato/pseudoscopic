@@ -10,7 +10,7 @@
 #   make check        - Run static analysis
 #   make DEBUG=1      - Build with debug symbols
 #
-# Copyright (C) 2025 Neural Splines LLC
+# Copyright (C) 2026 Neural Splines LLC
 
 # Module name
 MODULE_NAME := pseudoscopic

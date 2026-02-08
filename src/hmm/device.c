@@ -13,7 +13,7 @@
  *   - dev_pagemap: Describes device memory to the kernel
  *   - migrate_to_ram: Callback for CPU access to device pages
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  */
 
 #include <linux/memremap.h>

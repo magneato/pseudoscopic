@@ -19,7 +19,7 @@
  * When 50 GB of data only needs 1 MB of results extracted,
  * NMC wins by 100x.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * Author: Robert L. Sitton, Jr.
  */
 

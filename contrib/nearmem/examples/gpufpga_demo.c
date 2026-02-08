@@ -18,7 +18,7 @@
  * A LUT is just a table lookup. A flip-flop is a conditional move.
  * This maps perfectly to GPU execution.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 

@@ -8,7 +8,7 @@
  * Handles parameter parsing, device selection, and mode switching.
  * Supports identifying as a Memory Controller or a Block Device.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * Author: Robert L. Sitton, Jr.
  */
 
@@ -475,7 +475,7 @@ static int __init ps_init(void)
     int ret;
     
     pr_info("pseudoscopic: " DRIVER_DESC " v%s\n", PS_VERSION_STRING);
-    pr_info("pseudoscopic: Copyright (C) 2025 Neural Splines LLC\n");
+    pr_info("pseudoscopic: Copyright (C) 2026 Neural Splines LLC\n");
     pr_info("pseudoscopic: mode=%s device_idx=%d\n", mode_str, device_idx);
     
     /* Validate module parameters */

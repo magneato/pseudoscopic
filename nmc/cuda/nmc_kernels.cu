@@ -12,7 +12,7 @@
  * Every operation we do here instead of on CPU saves 58x
  * in effective bandwidth.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  */
 
 #include <cuda_runtime.h>

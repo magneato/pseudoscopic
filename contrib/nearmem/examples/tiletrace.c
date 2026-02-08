@@ -44,7 +44,7 @@
  * OUTPUT:
  *   frame_NNNN.ppm files (convert with ImageMagick)
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * SPDX-License-Identifier: MIT
  */
 

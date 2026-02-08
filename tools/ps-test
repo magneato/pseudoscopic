@@ -6,7 +6,7 @@
 # Validates the driver is functioning correctly and can
 # stress test the migration pathways.
 #
-# Copyright (C) 2025 Neural Splines LLC
+# Copyright (C) 2026 Neural Splines LLC
 
 set -e
 

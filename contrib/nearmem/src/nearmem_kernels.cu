@@ -8,7 +8,7 @@
  * and we mmap that device, we get CPU access to GPU memory.
  * CUDA can access the exact same memory via device pointers.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 

@@ -15,7 +15,7 @@
  *
  * "First we crawl, then we walk, then we run x86 on a GPU."
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 

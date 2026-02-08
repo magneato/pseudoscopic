@@ -30,7 +30,7 @@
  *
  *   Result: Memory latency hidden behind compute!
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
  */
 
@@ -241,6 +241,8 @@ int main(int argc, char *argv[])
     nearmem_region_t A_region, B_region, C_region;
     int err;
     double start, end;
+    double tile_err = 0;
+    double nearmem_err = 0;
     
     /* Default sizes */
     size_t M = 1024;  /* Rows of A and C */
@@ -303,8 +305,8 @@ int main(int argc, char *argv[])
     printf("GFLOPS: %.2f\n", (2.0 * M * N * K) / ((end - start) / 1000.0) / 1e9);
     
     /* Verify tiled matches reference */
-    double err = max_error(C_ref, C_tiled, M * N);
-    printf("Max error vs reference: %e\n", err);
+    tile_err = max_error(C_ref, C_tiled, M * N);
+    printf("Max error vs reference: %e\n", tile_err);
     
     /* Near-memory implementation */
     const char *device = (argc > 5) ? argv[5] : "/dev/psdisk0";
@@ -331,8 +333,8 @@ int main(int argc, char *argv[])
         memcpy(C_nearmem, C_region.cpu_ptr, M * N * sizeof(float));
         
         /* Verify */
-        err = max_error(C_ref, C_nearmem, M * N);
-        printf("Max error vs reference: %e\n", err);
+        nearmem_err = max_error(C_ref, C_nearmem, M * N);
+        printf("Max error vs reference: %e\n", nearmem_err);
         
         /* Cleanup */
         nearmem_free(&ctx, &A_region);

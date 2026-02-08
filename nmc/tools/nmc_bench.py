@@ -8,7 +8,7 @@ Measures the PCIe efficiency gains of NMC patterns vs traditional approaches.
 Usage:
     python3 nmc_bench.py [--size SIZE_MB] [--ops NUM_OPS]
 
-Copyright (C) 2025 Neural Splines LLC
+Copyright (C) 2026 Neural Splines LLC
 """
 
 import argparse

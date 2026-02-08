@@ -14,7 +14,7 @@
  * Traditional: 10GB × 2 × N_ops = 20GB × N_ops PCIe traffic
  * NMC: 10GB load + few bytes per result
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  */
 
 #include <stdio.h>

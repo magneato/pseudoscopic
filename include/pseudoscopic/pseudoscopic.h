@@ -9,7 +9,7 @@
  *
  * Theme: Bioluminescence - illuminating the dark paths of data.
  *
- * Copyright (C) 2025 Neural Splines LLC
+ * Copyright (C) 2026 Neural Splines LLC
  * Author: Robert L. Sitton, Jr.
  *
  * This program is free software; you can redistribute it and/or modify
