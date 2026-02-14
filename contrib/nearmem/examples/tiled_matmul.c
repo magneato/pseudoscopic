@@ -309,41 +309,42 @@ int main(int argc, char *argv[])
     printf("Max error vs reference: %e\n", tile_err);
     
     /* Near-memory implementation */
-    const char *device = (argc > 5) ? argv[5] : "/dev/psdisk0";
+    const char *device = (argc > 5) ? argv[5] : NULL;
     
     err = nearmem_init(&ctx, device, 0);
-    if (err == NEARMEM_OK) {
-        /* Allocate VRAM regions */
-        nearmem_alloc(&ctx, &A_region, M * K * sizeof(float));
-        nearmem_alloc(&ctx, &B_region, K * N * sizeof(float));
-        nearmem_alloc(&ctx, &C_region, M * N * sizeof(float));
-        
-        /* Copy A and B to VRAM */
-        printf("\nCopying matrices to VRAM...\n");
-        memcpy(A_region.cpu_ptr, A, M * K * sizeof(float));
-        memcpy(B_region.cpu_ptr, B, K * N * sizeof(float));
-        nearmem_sync(&ctx, NEARMEM_SYNC_CPU_TO_GPU);
-        
-        /* Run near-memory tiled multiply */
-        matmul_nearmem_tiled(&ctx, &A_region, &B_region, &C_region,
-                            M, N, K, tile_size);
-        
-        /* Copy result back */
-        nearmem_sync(&ctx, NEARMEM_SYNC_GPU_TO_CPU);
-        memcpy(C_nearmem, C_region.cpu_ptr, M * N * sizeof(float));
-        
-        /* Verify */
-        nearmem_err = max_error(C_ref, C_nearmem, M * N);
-        printf("Max error vs reference: %e\n", nearmem_err);
-        
-        /* Cleanup */
-        nearmem_free(&ctx, &A_region);
-        nearmem_free(&ctx, &B_region);
-        nearmem_free(&ctx, &C_region);
-        nearmem_shutdown(&ctx);
-    } else {
-        printf("\nNear-memory not available (%s)\n", nearmem_strerror(err));
+    if (err != NEARMEM_OK) {
+        fprintf(stderr, "Error: Near-memory not available (%s)\n", nearmem_strerror(err));
+        return 1;
     }
+
+    /* Allocate VRAM regions */
+    nearmem_alloc(&ctx, &A_region, M * K * sizeof(float));
+    nearmem_alloc(&ctx, &B_region, K * N * sizeof(float));
+    nearmem_alloc(&ctx, &C_region, M * N * sizeof(float));
+    
+    /* Copy A and B to VRAM */
+    printf("\nCopying matrices to VRAM...\n");
+    memcpy(A_region.cpu_ptr, A, M * K * sizeof(float));
+    memcpy(B_region.cpu_ptr, B, K * N * sizeof(float));
+    nearmem_sync(&ctx, NEARMEM_SYNC_CPU_TO_GPU);
+    
+    /* Run near-memory tiled multiply */
+    matmul_nearmem_tiled(&ctx, &A_region, &B_region, &C_region,
+                        M, N, K, tile_size);
+    
+    /* Copy result back */
+    nearmem_sync(&ctx, NEARMEM_SYNC_GPU_TO_CPU);
+    memcpy(C_nearmem, C_region.cpu_ptr, M * N * sizeof(float));
+    
+    /* Verify */
+    nearmem_err = max_error(C_ref, C_nearmem, M * N);
+    printf("Max error vs reference: %e\n", nearmem_err);
+    
+    /* Cleanup */
+    nearmem_free(&ctx, &A_region);
+    nearmem_free(&ctx, &B_region);
+    nearmem_free(&ctx, &C_region);
+    nearmem_shutdown(&ctx);
     
     /* Summary */
     printf("\n=== Summary ===\n");

@@ -72,6 +72,11 @@ static atomic_t device_count = ATOMIC_INIT(-1);
  * Using class-based matching for broader compatibility.
  */
 static const struct pci_device_id ps_pci_tbl[] = {
+    /* Specific Target Cards */
+    { PCI_DEVICE(PCI_VENDOR_ID_NVIDIA, 0x1d01) }, /* GT 1030 */
+    { PCI_DEVICE(PCI_VENDOR_ID_NVIDIA, 0x1b80) }, /* GTX 1080 */
+    { PCI_DEVICE(PCI_VENDOR_ID_NVIDIA, 0x5090) }, /* RTX 5090 */
+
     /* NVIDIA VGA compatible controllers */
     { PCI_VENDOR_ID_NVIDIA, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID,
       PCI_CLASS_DISPLAY_VGA << 8, 0xFFFF00, 0 },

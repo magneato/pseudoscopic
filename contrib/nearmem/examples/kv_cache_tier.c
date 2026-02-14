@@ -377,17 +377,13 @@ int main(int argc, char *argv[])
     printf("  KV/token:   %d bytes\n", KV_PER_TOKEN);
     
     /* Initialize near-memory context */
-    const char *device = (argc > 1) ? argv[1] : "/dev/psdisk0";
-    printf("\nInitializing near-memory context (%s)...\n", device);
+    const char *device = (argc > 1) ? argv[1] : NULL;
+    printf("\nInitializing near-memory context (%s)...\n", device ? device : "Auto-detect");
     
     err = nearmem_init(&nm_ctx, device, 0);
     if (err != NEARMEM_OK) {
-        /* Fallback: simulate without actual VRAM */
-        printf("Note: Could not initialize VRAM (%s)\n", nearmem_strerror(err));
-        printf("Running in simulation mode...\n\n");
-        
-        /* Create fake context for demo */
-        nm_ctx.ps_size = 16ULL * 1024 * 1024 * 1024;  /* Pretend 16 GB */
+        fprintf(stderr, "Error: Could not initialize VRAM (%s)\n", nearmem_strerror(err));
+        return 1;
     }
     
     /* Initialize tiered cache */
@@ -396,23 +392,10 @@ int main(int argc, char *argv[])
     
     printf("\nInitializing tiered KV-cache...\n");
     
-    if (nm_ctx.initialized) {
-        err = kv_tier_init(&tier, &nm_ctx, hot_tokens, warm_tokens);
-        if (err != 0) {
-            nearmem_shutdown(&nm_ctx);
-            return 1;
-        }
-    } else {
-        /* Simulation mode - just allocate hot tier */
-        memset(&tier, 0, sizeof(tier));
-        tier.max_hot_tokens = hot_tokens;
-        tier.max_warm_tokens = warm_tokens;
-        tier.hot_size = hot_tokens * KV_PER_TOKEN;
-        tier.hot_cache = malloc(tier.hot_size);
-        pthread_mutex_init(&tier.lock, NULL);
-        
-        printf("  Hot tier:  %zu MB (system RAM)\n", tier.hot_size >> 20);
-        printf("  Warm tier: (simulated)\n");
+    err = kv_tier_init(&tier, &nm_ctx, hot_tokens, warm_tokens);
+    if (err != 0) {
+        nearmem_shutdown(&nm_ctx);
+        return 1;
     }
     
     /* Simulate token generation */
@@ -427,17 +410,10 @@ int main(int argc, char *argv[])
     
     for (size_t i = 0; i < total_tokens; i++) {
         /* Append new token's KV */
-        if (nm_ctx.initialized) {
-            kv_tier_append(&tier, dummy_kv);
-        } else {
-            /* Simulation: just track counts */
-            tier.hot_tokens = (i < hot_tokens) ? i + 1 : hot_tokens;
-            tier.warm_tokens = (i >= hot_tokens) ? i - hot_tokens + 1 : 0;
-            tier.total_tokens = i + 1;
-        }
+        kv_tier_append(&tier, dummy_kv);
         
         /* Simulate attention (every token) */
-        if (nm_ctx.initialized && i > 0 && i % 100 == 0) {
+        if (i > 0 && i % 100 == 0) {
             simulate_attention(&tier, i);
         }
         
@@ -473,13 +449,8 @@ int main(int argc, char *argv[])
     
     /* Cleanup */
     free(dummy_kv);
-    if (nm_ctx.initialized) {
-        kv_tier_destroy(&tier);
-        nearmem_shutdown(&nm_ctx);
-    } else {
-        free(tier.hot_cache);
-        pthread_mutex_destroy(&tier.lock);
-    }
+    kv_tier_destroy(&tier);
+    nearmem_shutdown(&nm_ctx);
     
     printf("\nDone.\n");
     return 0;

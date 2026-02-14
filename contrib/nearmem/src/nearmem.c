@@ -208,8 +208,19 @@ nearmem_error_t nearmem_init(nearmem_ctx_t *ctx,
     void *mapped;
     size_t size;
     
-    if (!ctx || !device_path)
+    char auto_path[256];
+
+    if (!ctx)
         return NEARMEM_ERROR_INVALID;
+    
+    /* Auto-detect device if path is NULL */
+    if (!device_path) {
+        if (find_psdisk(auto_path, sizeof(auto_path)) == 0) {
+            device_path = auto_path;
+        } else {
+            return NEARMEM_ERROR_NO_DEVICE;
+        }
+    }
     
     /* Allocate internal context */
     ictx = calloc(1, sizeof(*ictx));
@@ -319,6 +330,153 @@ nearmem_error_t nearmem_init_auto(nearmem_ctx_t *ctx)
         return NEARMEM_ERROR_NO_DEVICE;
     
     return nearmem_init(ctx, path, 0);
+}
+
+/*
+ * Find PCI device with pseudoscopic driver bound
+ * Returns the PCI address (e.g., "0000:06:00.0") in buf
+ */
+static int find_pseudoscopic_pci(char *buf, size_t buf_len)
+{
+    DIR *dir;
+    struct dirent *entry;
+    char driver_link[512];
+    char target[512];
+    ssize_t len;
+    
+    dir = opendir("/sys/bus/pci/drivers/pseudoscopic");
+    if (!dir)
+        return -1;
+    
+    while ((entry = readdir(dir)) != NULL) {
+        /* Look for PCI addresses like 0000:06:00.0 */
+        if (entry->d_name[0] == '0' && strchr(entry->d_name, ':')) {
+            snprintf(buf, buf_len, "%s", entry->d_name);
+            closedir(dir);
+            return 0;
+        }
+    }
+    
+    closedir(dir);
+    return -1;
+}
+
+/*
+ * nearmem_init_bar1 - Initialize using direct BAR1 mmap
+ *
+ * This is a fallback when the pseudoscopic block device (/dev/psdisk*)
+ * isn't available. It directly mmaps the PCI BAR1 resource from sysfs.
+ *
+ * Useful for:
+ *   - GT 1030 and other GPUs where block device creation fails
+ *   - Testing without full driver setup
+ *   - Debugging driver issues
+ *
+ * Note: Requires root privileges to access sysfs resource files.
+ */
+nearmem_error_t nearmem_init_bar1(nearmem_ctx_t *ctx, 
+                                   const char *pci_addr,
+                                   int cuda_device)
+{
+    char pci_buf[64];
+    char bar1_path[256];
+    struct stat st;
+    int fd;
+    void *mapped;
+    size_t size;
+    CUdevice cu_dev;
+    CUresult cu_err;
+    
+    if (!ctx)
+        return NEARMEM_ERROR_INVALID;
+    
+    /* Auto-detect PCI address if not provided */
+    if (!pci_addr || !pci_addr[0]) {
+        if (find_pseudoscopic_pci(pci_buf, sizeof(pci_buf)) != 0) {
+            fprintf(stderr, "nearmem: no pseudoscopic device found\n");
+            return NEARMEM_ERROR_NO_DEVICE;
+        }
+        pci_addr = pci_buf;
+    }
+    
+    /* Build path to BAR1 resource (use resource1_wc for write-combining) */
+    snprintf(bar1_path, sizeof(bar1_path),
+             "/sys/bus/pci/devices/%s/resource1_wc", pci_addr);
+    
+    /* Fall back to non-WC if WC not available */
+    if (stat(bar1_path, &st) != 0) {
+        snprintf(bar1_path, sizeof(bar1_path),
+                 "/sys/bus/pci/devices/%s/resource1", pci_addr);
+    }
+    
+    printf("nearmem: trying direct BAR1 access: %s\n", bar1_path);
+    
+    /* Get BAR1 size */
+    if (stat(bar1_path, &st) != 0) {
+        fprintf(stderr, "nearmem: cannot stat %s: %s\n", 
+                bar1_path, strerror(errno));
+        return NEARMEM_ERROR_NO_DEVICE;
+    }
+    size = st.st_size;
+    
+    if (size == 0) {
+        fprintf(stderr, "nearmem: BAR1 size is 0\n");
+        return NEARMEM_ERROR_NO_DEVICE;
+    }
+    
+    /* Open BAR1 resource file */
+    fd = open(bar1_path, O_RDWR | O_SYNC);
+    if (fd < 0) {
+        fprintf(stderr, "nearmem: cannot open %s: %s\n",
+                bar1_path, strerror(errno));
+        fprintf(stderr, "nearmem: hint: run as root or add user to 'video' group\n");
+        return NEARMEM_ERROR_NO_DEVICE;
+    }
+    
+    /* mmap the BAR1 */
+    mapped = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                  MAP_SHARED, fd, 0);
+    if (mapped == MAP_FAILED) {
+        fprintf(stderr, "nearmem: mmap BAR1 failed: %s\n", strerror(errno));
+        close(fd);
+        return NEARMEM_ERROR_MMAP;
+    }
+    
+    /* Fill in context first */
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->ps_fd = fd;
+    ctx->ps_base = mapped;
+    ctx->ps_size = size;
+    ctx->cuda_device = cuda_device;
+    ctx->initialized = true;
+    
+#ifndef NEARMEM_USE_CUDA_HEADERS
+    /* Load CUDA library (optional - CPU mode works without it) */
+    if (load_cuda() != 0) {
+        fprintf(stderr, "nearmem: CUDA not available (CPU-only mode)\n");
+        /* Continue without CUDA */
+    } else
+#endif
+    {
+        /* Initialize CUDA if available */
+        cu_err = cuInit(0);
+        if (cu_err == CUDA_SUCCESS) {
+            cu_err = cuDeviceGet(&cu_dev, cuda_device);
+            if (cu_err == CUDA_SUCCESS) {
+                cu_err = cuCtxCreate((CUcontext*)&ctx->cuda_ctx, 0, cu_dev);
+                if (cu_err != CUDA_SUCCESS) {
+                    ctx->cuda_ctx = NULL;
+                    fprintf(stderr, "nearmem: CUDA context creation failed\n");
+                }
+            }
+        }
+    }
+    
+    printf("nearmem: BAR1 direct access initialized\n");
+    printf("nearmem: PCI: %s, Size: %zu MB, Base: %p\n",
+           pci_addr, size >> 20, mapped);
+    
+    return NEARMEM_OK;
 }
 
 void nearmem_shutdown(nearmem_ctx_t *ctx)

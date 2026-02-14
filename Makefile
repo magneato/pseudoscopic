@@ -35,14 +35,14 @@ all: modules
 # Build kernel module
 modules:
 	@echo "  Building kernel module..."
-	$(MAKE) -C $(KDIR) M=$(PWD)/src modules
+	$(MAKE) -C $(KDIR) M=$(CURDIR)/src modules
 	# Copy the module to the root directory for convenience/scripts
 	cp src/$(MODULE_NAME).ko .
 
 # Clean all artifacts
 clean:
 	@echo "  Cleaning..."
-	$(MAKE) -C $(KDIR) M=$(PWD)/src clean 2>/dev/null || true
+	$(MAKE) -C $(KDIR) M=$(CURDIR)/src clean 2>/dev/null || true
 	rm -f $(MODULE_NAME).ko
 	rm -f Module.symvers modules.order
 	rm -rf .tmp_versions
@@ -84,14 +84,14 @@ dkms-remove:
 # Static analysis
 check:
 	@echo "  Running sparse..."
-	$(MAKE) -C $(KDIR) M=$(PWD)/src C=2 modules 2>&1 | grep -v "^make"
+	$(MAKE) -C $(KDIR) M=$(CURDIR)/src C=2 modules 2>&1 | grep -v "^make"
 	@echo "  Running checkpatch..."
 	$(KDIR)/scripts/checkpatch.pl --no-tree -f src/core/*.c src/hmm/*.c src/dma/*.c || true
 
 # Generate compile_commands.json for IDE integration
 compile_commands.json:
 	@echo "  Generating compile_commands.json..."
-	$(MAKE) -C $(KDIR) M=$(PWD)/src compile_commands.json
+	$(MAKE) -C $(KDIR) M=$(CURDIR)/src compile_commands.json
 
 # Help target
 help:

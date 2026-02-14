@@ -107,6 +107,19 @@ static const struct blk_mq_ops ps_mq_ops = {
 };
 
 /*
+ * Block device operations
+ *
+ * Modern kernels (6.x) REQUIRE a valid fops pointer - device_add_disk()
+ * dereferences it and will crash if it's NULL.
+ *
+ * We don't need any special operations, but we must provide the struct.
+ */
+static const struct block_device_operations ps_block_fops = {
+    .owner = THIS_MODULE,
+    /* No open/release/ioctl needed - blk-mq handles everything */
+};
+
+/*
  * ps_block_init - Birth of the Block Device
  * @dev: Pseudoscopic device to expose
  *
@@ -179,7 +192,7 @@ int ps_block_init(struct ps_device *dev)
     disk->major = 0;        /* Auto-allocate major number */
     disk->first_minor = 0;
     disk->minors = 1;
-    disk->fops = NULL;      /* No special ioctls needed */
+    disk->fops = &ps_block_fops;  /* Required - NULL causes crash in device_add_disk() */
     disk->private_data = dev;
 
     /* Capacity in 512-byte sectors */

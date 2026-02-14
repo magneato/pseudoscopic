@@ -386,66 +386,58 @@ int main(int argc, char *argv[])
     demo_traditional(input, output, width, height, kernel);
     
     /* Demo 2: Tiled near-memory approach */
-    const char *device = (argc > 5) ? argv[5] : "/dev/psdisk0";
+    const char *device = (argc > 5) ? argv[5] : NULL;
     
     err = nearmem_init(&ctx, device, 0);
-    if (err == NEARMEM_OK) {
-        /* Allocate VRAM regions */
-        err = nearmem_alloc(&ctx, &input_region, image_size);
-        if (err != NEARMEM_OK) {
-            printf("Failed to allocate input region: %s\n", nearmem_strerror(err));
-            goto fallback;
-        }
-        
-        err = nearmem_alloc(&ctx, &output_region, image_size);
-        if (err != NEARMEM_OK) {
-            printf("Failed to allocate output region: %s\n", nearmem_strerror(err));
-            nearmem_free(&ctx, &input_region);
-            goto fallback;
-        }
-        
-        /* Copy input to VRAM */
-        printf("\nCopying input to VRAM...\n");
-        memcpy(input_region.cpu_ptr, input, image_size);
-        nearmem_sync(&ctx, NEARMEM_SYNC_CPU_TO_GPU);
-        
-        /* Run tiled demo */
-        demo_tiled(&ctx, &input_region, &output_region,
-                   width, height, tile_w, tile_h, kernel);
-        
-        /* Copy output from VRAM */
-        nearmem_sync(&ctx, NEARMEM_SYNC_GPU_TO_CPU);
-        memcpy(output_tiled, output_region.cpu_ptr, image_size);
-        
-        /* Verify results match */
-        printf("\nVerifying results...\n");
-        double cs_trad = checksum(output, width * height);
-        double cs_tiled = checksum(output_tiled, width * height);
-        printf("  Traditional checksum: %.6f\n", cs_trad);
-        printf("  Tiled checksum:       %.6f\n", cs_tiled);
-        printf("  Match: %s\n", (fabs(cs_trad - cs_tiled) < 1e-3) ? "YES" : "NO (expected - edge handling)");
-        
-        /* Cleanup */
-        nearmem_free(&ctx, &input_region);
-        nearmem_free(&ctx, &output_region);
-        nearmem_shutdown(&ctx);
-    } else {
-fallback:
-        printf("\nNote: Near-memory not available (%s)\n", nearmem_strerror(err));
-        printf("Running tiled simulation on CPU...\n");
-        
-        /* Create fake context for demo */
-        memset(&ctx, 0, sizeof(ctx));
-        
-        /* Simulate with system RAM */
-        input_region.cpu_ptr = input;
-        input_region.size = image_size;
-        output_region.cpu_ptr = output_tiled;
-        output_region.size = image_size;
-        
-        /* This won't have VRAM benefits, but demonstrates the API */
-        printf("(Tiled API demo without actual VRAM - transfer metrics not applicable)\n");
+    if (err != NEARMEM_OK) {
+        fprintf(stderr, "Error: Near-memory not available (%s)\n", nearmem_strerror(err));
+        free(input);
+        free(output);
+        free(output_tiled);
+        return 1;
     }
+
+    /* Allocate VRAM regions */
+    err = nearmem_alloc(&ctx, &input_region, image_size);
+    if (err != NEARMEM_OK) {
+        printf("Failed to allocate input region: %s\n", nearmem_strerror(err));
+        nearmem_shutdown(&ctx);
+        return 1;
+    }
+    
+    err = nearmem_alloc(&ctx, &output_region, image_size);
+    if (err != NEARMEM_OK) {
+        printf("Failed to allocate output region: %s\n", nearmem_strerror(err));
+        nearmem_free(&ctx, &input_region);
+        nearmem_shutdown(&ctx);
+        return 1;
+    }
+    
+    /* Copy input to VRAM */
+    printf("\nCopying input to VRAM...\n");
+    memcpy(input_region.cpu_ptr, input, image_size);
+    nearmem_sync(&ctx, NEARMEM_SYNC_CPU_TO_GPU);
+    
+    /* Run tiled demo */
+    demo_tiled(&ctx, &input_region, &output_region,
+               width, height, tile_w, tile_h, kernel);
+    
+    /* Copy output from VRAM */
+    nearmem_sync(&ctx, NEARMEM_SYNC_GPU_TO_CPU);
+    memcpy(output_tiled, output_region.cpu_ptr, image_size);
+    
+    /* Verify results match */
+    printf("\nVerifying results...\n");
+    double cs_trad = checksum(output, width * height);
+    double cs_tiled = checksum(output_tiled, width * height);
+    printf("  Traditional checksum: %.6f\n", cs_trad);
+    printf("  Tiled checksum:       %.6f\n", cs_tiled);
+    printf("  Match: %s\n", (fabs(cs_trad - cs_tiled) < 1e-3) ? "YES" : "NO (expected - edge handling)");
+    
+    /* Cleanup */
+    nearmem_free(&ctx, &input_region);
+    nearmem_free(&ctx, &output_region);
+    nearmem_shutdown(&ctx);
     
     /* Summary */
     printf("\n=== Summary ===\n");

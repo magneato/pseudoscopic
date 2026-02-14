@@ -316,18 +316,21 @@ int main(int argc, char *argv[])
     printf("╚══════════════════════════════════════════════════════════════╝\n");
     
     /* Parse arguments */
-    if (argc < 2) {
-        printf("\nUsage: %s <device> [pattern]\n", argv[0]);
-        printf("  device:  /dev/psdisk0 (pseudoscopic ramdisk)\n");
-        printf("  pattern: string to search for (default: ERROR)\n");
-        printf("\nSetup:\n");
-        printf("  sudo modprobe pseudoscopic mode=ramdisk\n");
-        printf("  sudo dd if=access.log of=/dev/psdisk0 bs=1M\n");
-        printf("  ./%s /dev/psdisk0 ERROR\n", argv[0]);
-        return 1;
+    const char *device_path = NULL;
+    const char *pattern = "ERROR";
+
+    if (argc > 1) {
+        if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
+            printf("\nUsage: %s [device] [pattern]\n", argv[0]);
+            printf("  device:  /dev/psdisk* (default: auto-detect)\n");
+            printf("  pattern: string to search for (default: ERROR)\n");
+            printf("\nExample:\n");
+            printf("  ./%s /dev/psdisk0 ERROR\n", argv[0]);
+            return 0;
+        }
+        device_path = argv[1];
     }
     
-    device_path = argv[1];
     if (argc > 2)
         pattern = argv[2];
     

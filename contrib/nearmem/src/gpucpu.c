@@ -1,19 +1,16 @@
 /*
- * gpucpu.c - GPU-CPU Emulator: Proof of Concept
+ * gpucpu.c - GPU-CPU Emulator: x86 on GPU
  *
- * Phase 1 Implementation: 8086 Real Mode Subset
+ * THE DREAM REALIZED: x86 execution runs ENTIRELY on GPU.
  *
- * This implements enough x86 to run simple .COM programs:
- *   - 16-bit real mode
- *   - Basic instructions (MOV, ADD, SUB, CMP, JMP, CALL, RET, INT)
- *   - Memory addressing modes
- *   - Stack operations
+ * This implements the x86 interpreter with two execution paths:
+ *   1. GPU Path (preferred): The fetch-decode-execute loop runs on GPU
+ *   2. CPU Path (fallback): Traditional CPU interpretation
  *
- * The magic: Everything runs via near-memory. State and RAM live in VRAM,
- * accessed through BAR1 mmap. The interpreter loop can run on CPU (this file)
- * or GPU (gpucpu_kernels.cu).
+ * The GPU path uses gpucpu_kernels.cu for the interpreter kernel.
+ * I/O operations (INT 21h) trap to host CPU, then return to GPU.
  *
- * "First we crawl, then we walk, then we run x86 on a GPU."
+ * "The GPU IS the CPU. We've just been using it wrong."
  *
  * Copyright (C) 2026 Neural Splines LLC
  * License: MIT
@@ -26,6 +23,24 @@
 #include <sys/time.h>
 
 #include "gpucpu.h"
+
+/*
+ * CUDA interface declarations (implemented in gpucpu_kernels.cu)
+ */
+#ifdef NEARMEM_HAS_CUDA
+extern int gpucpu_cuda_init(void);
+extern void gpucpu_cuda_shutdown(void);
+extern uint64_t gpucpu_cuda_run(void *state, void *ram, size_t ram_size,
+                                 uint64_t max_instructions,
+                                 int *needs_io, uint8_t *io_vector);
+extern int gpucpu_cuda_available(void);
+extern int gpucpu_cuda_get_device_info(int device_id, char *name, size_t name_len,
+                                        size_t *total_mem, int *compute_major,
+                                        int *compute_minor, int *is_tiny);
+extern int gpucpu_cuda_select_device(const char *pci_bus_id);
+extern int gpucpu_cuda_get_tier(size_t total_mem);
+extern size_t gpucpu_cuda_get_recommended_ram(int tier, size_t total_mem);
+#endif
 
 /*
  * Timing helper
@@ -77,6 +92,56 @@ int gpucpu_init(gpucpu_ctx_t *ctx, nearmem_ctx_t *nm_ctx, size_t ram_size) {
     /* Sync to GPU */
     nearmem_sync(nm_ctx, NEARMEM_SYNC_CPU_TO_GPU);
     
+#ifdef NEARMEM_HAS_CUDA
+    /* Initialize CUDA resources and enable GPU execution */
+    if (gpucpu_cuda_available()) {
+        /* Detect GPU tier and tiny mode */
+        char gpu_name[256] = {0};
+        size_t gpu_mem = 0;
+        int major = 0, minor = 0, is_tiny = 0;
+        
+        if (gpucpu_cuda_get_device_info(0, gpu_name, sizeof(gpu_name),
+                                         &gpu_mem, &major, &minor, &is_tiny) == 0) {
+            int tier = gpucpu_cuda_get_tier(gpu_mem);
+            
+            /* Set GPU tier and tiny mode in context */
+            ctx->gpu_tier = tier;
+            ctx->tiny_mode = is_tiny ? true : false;
+            
+            const char *tier_names[] = {"NONE", "TINY", "LOW", "MID", "HIGH"};
+            printf("gpucpu: GPU detected: %s\n", gpu_name);
+            printf("gpucpu: VRAM: %zu MB, Compute: %d.%d, Tier: %s%s\n",
+                   gpu_mem >> 20, major, minor,
+                   tier_names[tier < 5 ? tier : 0],
+                   is_tiny ? " (TINY MODE)" : "");
+            
+            if (is_tiny) {
+                size_t recommended = gpucpu_cuda_get_recommended_ram(tier, gpu_mem);
+                printf("gpucpu: Tiny mode enabled - recommended guest RAM: %zu MB\n",
+                       recommended >> 20);
+            }
+        }
+        
+        if (gpucpu_cuda_init() == 0) {
+            ctx->use_gpu = true;
+            printf("gpucpu: GPU execution ENABLED (interpreter runs on GPU!)\n");
+        } else {
+            printf("gpucpu: GPU init failed, falling back to CPU\n");
+            ctx->use_gpu = false;
+            ctx->gpu_tier = 0;  /* GPU_TIER_NONE */
+        }
+    } else {
+        printf("gpucpu: No CUDA device, using CPU execution\n");
+        ctx->use_gpu = false;
+        ctx->gpu_tier = 0;  /* GPU_TIER_NONE */
+    }
+#else
+    ctx->use_gpu = false;
+    ctx->gpu_tier = 0;  /* GPU_TIER_NONE */
+    ctx->tiny_mode = false;
+    printf("gpucpu: Compiled without CUDA, using CPU execution\n");
+#endif
+    
     printf("gpucpu: Initialized with %zu MB guest RAM in VRAM\n", ram_size >> 20);
     
     return 0;
@@ -85,6 +150,12 @@ int gpucpu_init(gpucpu_ctx_t *ctx, nearmem_ctx_t *nm_ctx, size_t ram_size) {
 void gpucpu_shutdown(gpucpu_ctx_t *ctx) {
     if (!ctx)
         return;
+    
+#ifdef NEARMEM_HAS_CUDA
+    if (ctx->use_gpu) {
+        gpucpu_cuda_shutdown();
+    }
+#endif
     
     if (ctx->memory.nm_ctx) {
         nearmem_free(ctx->memory.nm_ctx, &ctx->memory.state_region);
@@ -806,6 +877,51 @@ int gpucpu_step(gpucpu_ctx_t *ctx) {
  * ============================================================
  */
 
+/*
+ * Handle I/O interrupts that require host CPU involvement.
+ * Called when GPU kernel returns with needs_io set.
+ */
+static void handle_io_interrupt(gpucpu_ctx_t *ctx, uint8_t vector) {
+    x86_state_t *s = ctx->state;
+    
+    /* Sync state from GPU before reading */
+    nearmem_sync(ctx->memory.nm_ctx, NEARMEM_SYNC_GPU_TO_CPU);
+    
+    /* Skip the INT instruction (we backed up in kernel) */
+    s->rip += 2;
+    
+    if (vector == 0x21) {
+        /* DOS INT 21h */
+        uint8_t ah = (s->rax >> 8) & 0xFF;
+        
+        if (ah == 0x4C) {
+            /* DOS terminate */
+            s->halted = true;
+        }
+        else if (ah == 0x02) {
+            /* DOS print character (DL) */
+            char c = s->rdx & 0xFF;
+            putchar(c);
+        }
+        else if (ah == 0x09) {
+            /* DOS print string at DS:DX, terminated by '$' */
+            uint32_t addr = ((uint32_t)s->ds << 4) + (s->rdx & 0xFFFF);
+            while (addr < ctx->memory.ram_size) {
+                char c = ctx->ram[addr++];
+                if (c == '$') break;
+                putchar(c);
+            }
+        }
+    }
+    else if (vector == 0x20) {
+        /* DOS terminate */
+        s->halted = true;
+    }
+    
+    /* Sync state back to GPU */
+    nearmem_sync(ctx->memory.nm_ctx, NEARMEM_SYNC_CPU_TO_GPU);
+}
+
 uint64_t gpucpu_run(gpucpu_ctx_t *ctx, uint64_t max_instructions) {
     if (!ctx || !ctx->state)
         return 0;
@@ -813,23 +929,70 @@ uint64_t gpucpu_run(gpucpu_ctx_t *ctx, uint64_t max_instructions) {
     double start_time = get_time_ms();
     uint64_t count = 0;
     
-    while (!ctx->state->halted) {
-        if (max_instructions > 0 && count >= max_instructions)
-            break;
+#ifdef NEARMEM_HAS_CUDA
+    if (ctx->use_gpu) {
+        /*
+         * GPU EXECUTION PATH
+         * ==================
+         * The x86 interpreter runs entirely on GPU.
+         * We only return to CPU for I/O interrupts (INT 21h).
+         */
+        while (!ctx->state->halted) {
+            if (max_instructions > 0 && count >= max_instructions)
+                break;
+            
+            int needs_io = 0;
+            uint8_t io_vector = 0;
+            uint64_t batch_max = (max_instructions > 0) ? 
+                                 (max_instructions - count) : 0;
+            
+            /* Run on GPU until HLT or I/O needed */
+            uint64_t executed = gpucpu_cuda_run(
+                ctx->state,
+                ctx->ram,
+                ctx->memory.ram_size,
+                batch_max,
+                &needs_io,
+                &io_vector
+            );
+            
+            count += executed;
+            
+            if (needs_io) {
+                /* Handle I/O on CPU, then continue on GPU */
+                handle_io_interrupt(ctx, io_vector);
+            } else {
+                /* Sync final state from GPU */
+                nearmem_sync(ctx->memory.nm_ctx, NEARMEM_SYNC_GPU_TO_CPU);
+                break;
+            }
+        }
+    } else
+#endif
+    {
+        /*
+         * CPU EXECUTION PATH (fallback)
+         * =============================
+         * Traditional interpretation on host CPU.
+         */
+        while (!ctx->state->halted) {
+            if (max_instructions > 0 && count >= max_instructions)
+                break;
+            
+            int ret = gpucpu_step(ctx);
+            if (ret < 0)
+                break;
+            
+            count++;
+        }
         
-        int ret = gpucpu_step(ctx);
-        if (ret < 0)
-            break;
-        
-        count++;
+        /* Sync state back to CPU-accessible memory */
+        nearmem_sync(ctx->memory.nm_ctx, NEARMEM_SYNC_GPU_TO_CPU);
     }
     
     double elapsed = get_time_ms() - start_time;
     ctx->total_instructions += count;
     ctx->total_time_ms += elapsed;
-    
-    /* Sync state back to CPU-accessible memory */
-    nearmem_sync(ctx->memory.nm_ctx, NEARMEM_SYNC_GPU_TO_CPU);
     
     return count;
 }

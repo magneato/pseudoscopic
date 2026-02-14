@@ -782,7 +782,7 @@ int main(int argc, char **argv) {
     printf("╚══════════════════════════════════════════════════════════════════╝\n\n");
     
     int num_frames = (argc > 1) ? atoi(argv[1]) : 1;
-    const char *device = (argc > 2) ? argv[2] : "/dev/psdisk0";
+    const char *device = (argc > 2) ? argv[2] : NULL;
     
     printf("Configuration:\n");
     printf("  Resolution:   %d × %d\n", WIDTH, HEIGHT);
@@ -802,32 +802,29 @@ int main(int argc, char **argv) {
     
     /* Try near-memory allocation */
     nearmem_ctx_t nm_ctx;
-    bool use_nm = false;
     nearmem_region_t hm_region, tree_region, fb_region;
+    int err;
     
-    if (nearmem_init(&nm_ctx, device, 0) == NEARMEM_OK) {
-        printf("\n✓ Near-memory available (%zu MB VRAM)\n", nm_ctx.ps_size >> 20);
+    err = nearmem_init(&nm_ctx, device, 0);
+    if (err != NEARMEM_OK) {
+        fprintf(stderr, "Error: Near-memory not available (%s)\n", nearmem_strerror(err));
+        return 1;
+    }
+
+    printf("\n✓ Near-memory available (%zu MB VRAM)\n", nm_ctx.ps_size >> 20);
         
-        if (nearmem_alloc(&nm_ctx, &hm_region, hm_bytes) == NEARMEM_OK &&
-            nearmem_alloc(&nm_ctx, &tree_region, tree_bytes) == NEARMEM_OK &&
-            nearmem_alloc(&nm_ctx, &fb_region, fb_bytes) == NEARMEM_OK) {
+    if (nearmem_alloc(&nm_ctx, &hm_region, hm_bytes) != NEARMEM_OK ||
+        nearmem_alloc(&nm_ctx, &tree_region, tree_bytes) != NEARMEM_OK ||
+        nearmem_alloc(&nm_ctx, &fb_region, fb_bytes) != NEARMEM_OK) {
+        fprintf(stderr, "Error: Failed to allocate scene in VRAM\n");
+        nearmem_shutdown(&nm_ctx);
+        return 1;
+    }
             
-            g_scene.heightmap = hm_region.cpu_ptr;
-            g_scene.trees = tree_region.cpu_ptr;
-            g_scene.framebuffer = fb_region.cpu_ptr;
-            use_nm = true;
-            printf("  Scene allocated in VRAM ✓\n");
-        } else {
-            nearmem_shutdown(&nm_ctx);
-        }
-    }
-    
-    if (!use_nm) {
-        printf("\n✗ Near-memory unavailable, using system RAM\n");
-        g_scene.heightmap = malloc(hm_bytes);
-        g_scene.trees = malloc(tree_bytes);
-        g_scene.framebuffer = malloc(fb_bytes);
-    }
+    g_scene.heightmap = hm_region.cpu_ptr;
+    g_scene.trees = tree_region.cpu_ptr;
+    g_scene.framebuffer = fb_region.cpu_ptr;
+    printf("  Scene allocated in VRAM ✓\n");
     
     /* Lighting */
     g_scene.sun_dir = v3_norm(V3(0.4f, 0.8f, 0.3f));
@@ -841,7 +838,7 @@ int main(int argc, char **argv) {
     g_scene.num_trees = place_trees(g_scene.trees);
     printf("  World generated in %.0f ms\n", now_ms() - gen_start);
     
-    if (use_nm) nearmem_sync(&nm_ctx, NEARMEM_SYNC_CPU_TO_GPU);
+    nearmem_sync(&nm_ctx, NEARMEM_SYNC_CPU_TO_GPU);
     
     /* Tile counts */
     int tiles_x = (WIDTH + TILE_SIZE - 1) / TILE_SIZE;
@@ -873,7 +870,7 @@ int main(int argc, char **argv) {
         printf("  Rendered in %.0f ms (%.2f Mrays/sec)     \n", elapsed, mrays);
         
         /* Save */
-        if (use_nm) nearmem_sync(&nm_ctx, NEARMEM_SYNC_GPU_TO_CPU);
+        nearmem_sync(&nm_ctx, NEARMEM_SYNC_GPU_TO_CPU);
         
         char path[64];
         snprintf(path, sizeof(path), "frame_%04d.ppm", frame);
@@ -893,17 +890,11 @@ int main(int argc, char **argv) {
     printf("  ✓ Soft shadows        (shadow rays)\n");
     printf("  ✓ Distance fog        (exponential falloff)\n\n");
     
-    if (use_nm) {
-        printf("Near-Memory Status:\n");
-        printf("  ✓ Heightmap in VRAM   (accessed via BAR1 mmap)\n");
-        printf("  ✓ Tree data in VRAM   (no PCIe copies)\n");
-        printf("  ✓ Framebuffer in VRAM (tiled writes)\n");
-        nearmem_shutdown(&nm_ctx);
-    } else {
-        free(g_scene.heightmap);
-        free(g_scene.trees);
-        free(g_scene.framebuffer);
-    }
+    printf("Near-Memory Status:\n");
+    printf("  ✓ Heightmap in VRAM   (accessed via BAR1 mmap)\n");
+    printf("  ✓ Tree data in VRAM   (no PCIe copies)\n");
+    printf("  ✓ Framebuffer in VRAM (tiled writes)\n");
+    nearmem_shutdown(&nm_ctx);
     
     printf("\nOutput: frame_*.ppm\n");
     printf("Convert: convert frame_0000.ppm frame.png\n");

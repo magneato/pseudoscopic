@@ -440,6 +440,18 @@ typedef struct {
         MODE_LONG,          /* 64-bit long mode */
     } mode;
     
+    /* GPU tier for resource management */
+    enum {
+        GPU_TIER_NONE,      /* No GPU / CPU fallback */
+        GPU_TIER_TINY,      /* GT 1030, GTX 1050: <4 GB, limited compute */
+        GPU_TIER_LOW,       /* GTX 1060, RTX 2060: 4-8 GB */
+        GPU_TIER_MID,       /* RTX 3070, RTX 4070: 8-16 GB */
+        GPU_TIER_HIGH,      /* RTX 3090, RTX 4090, A100: 24+ GB */
+    } gpu_tier;
+    
+    /* Tiny mode: conservative settings for low-memory GPUs */
+    bool tiny_mode;
+    
     /* I/O callbacks (handled by host CPU) */
     uint8_t (*io_read)(void *ctx, uint16_t port);
     void (*io_write)(void *ctx, uint16_t port, uint8_t value);

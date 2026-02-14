@@ -66,7 +66,7 @@ endif
 # SOURCE FILES
 #==============================================================================
 LIB_SRCS := src/nearmem.c src/nearmem_tile.c src/gpucpu.c src/gpufpga.c src/abyssal.c src/nearmem_gpu.c
-CUDA_SRCS := src/nearmem_kernels.cu
+CUDA_SRCS := src/nearmem_kernels.cu src/gpucpu_kernels.cu
 EXAMPLE_SRCS := examples/log_analyzer.c examples/kv_cache_tier.c examples/tiled_convolution.c \
                 examples/tiled_matmul.c examples/tiletrace.c examples/gpucpu_demo.c \
                 examples/gpufpga_demo.c examples/abyssal_demo.c
@@ -130,12 +130,12 @@ ifdef CUDA_ENABLED
 	$(NVCC) $(NVCCFLAGS) -c $< -o $@
 else
 # Stub for when CUDA isn't available
-src/nearmem_kernels.o:
-	@echo "WARNING: CUDA not available - creating stub object"
+src/nearmem_kernels.o src/gpucpu_kernels.o:
+	@echo "WARNING: CUDA not available - creating stub object for $@"
 	@echo "  - NVCC path checked: $(NVCC)"
 	@echo "  - libcuda.so checked in: $(CUDA_LIB_PATHS)"
 	@echo "  - Run 'make cuda-info' for details"
-	@echo "void nearmem_cuda_stub(void) {}" | $(CC) -x c -c - -o $@
+	@echo "void $$(basename $@ .o)_stub(void) {}" | $(CC) -x c -c - -o $@
 endif
 
 #==============================================================================

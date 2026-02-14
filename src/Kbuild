@@ -5,7 +5,7 @@
 # This file is read by the kernel build system when building
 # the module from the src/ directory.
 #
-# Copyright (C) 2025 Neural Splines LLC
+# Copyright (C) 2026 Neural Splines LLC
 
 MODULE_NAME := pseudoscopic
 

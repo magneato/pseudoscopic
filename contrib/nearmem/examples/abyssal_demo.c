@@ -41,6 +41,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "nearmem.h"
 #include "gpufpga.h"
 #include "abyssal.h"
 
@@ -171,8 +172,20 @@ int main(int argc, char *argv[]) {
     printf("  Initializing...\n\n");
     printf("\033[0m");
     
+    /* Try to initialize VRAM for acceleration */
+    nearmem_ctx_t nm_ctx;
+    nearmem_ctx_t *p_nm_ctx = NULL;
+    
+    if (nearmem_init(&nm_ctx, NULL, 0) == NEARMEM_OK) {
+        printf("  ✓ GPU acceleration enabled (VRAM detected)\n");
+        p_nm_ctx = &nm_ctx;
+    } else {
+        fprintf(stderr, "Error: GPU unavailable. Pseudoscopic driver required.\n");
+        return 1;
+    }
+    
     /* Initialize FPGA simulator */
-    gpufpga_init(&fpga_ctx, NULL);
+    gpufpga_init(&fpga_ctx, p_nm_ctx);
     gpufpga_builder_init(&builder, 500, 100);
     
     /* Build test circuit */

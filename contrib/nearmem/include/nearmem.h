@@ -164,6 +164,22 @@ nearmem_error_t nearmem_init(nearmem_ctx_t *ctx,
 nearmem_error_t nearmem_init_auto(nearmem_ctx_t *ctx);
 
 /*
+ * nearmem_init_bar1 - Initialize using direct BAR1 mmap
+ * @ctx:         Context to initialize
+ * @pci_addr:    PCI address (e.g., "0000:06:00.0") or NULL to auto-detect
+ * @cuda_device: CUDA device index
+ *
+ * Fallback for when block device isn't available (e.g., GT 1030).
+ * Directly mmaps the PCI BAR1 resource from sysfs.
+ * Requires root or membership in 'video' group.
+ *
+ * Returns: NEARMEM_OK on success, error code on failure
+ */
+nearmem_error_t nearmem_init_bar1(nearmem_ctx_t *ctx,
+                                   const char *pci_addr,
+                                   int cuda_device);
+
+/*
  * nearmem_shutdown - Clean up context
  * @ctx: Context to destroy
  */

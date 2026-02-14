@@ -158,21 +158,20 @@ jobs:
           # Run the test
           /tmp/test_wrapper
           
-      - name: Driver Syntax Check
+      - name: Build Kernel Module
         if: matrix.build_type == 'release'
-        working-directory: driver
-        continue-on-error: true
         run: |
-          echo "=== Driver Source Files ==="
-          ls -la *.c *.h 2>/dev/null || echo "No driver sources found"
+          echo "=== Building Kernel Module ==="
+          make clean
+          make module KDIR=/lib/modules/$(uname -r)/build
           
-          # Syntax-only compilation check
-          for src in *.c; do
-            if [ -f "$src" ]; then
-              echo "Checking $src..."
-              gcc -fsyntax-only -Wall -I../include "$src" 2>&1 || true
-            fi
-          done
+          if [ -f "pseudoscopic.ko" ]; then
+            echo "✓ pseudoscopic.ko built successfully"
+            modinfo pseudoscopic.ko | head -5
+          else
+            echo "::error::Module build failed"
+            exit 1
+          fi
           
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
