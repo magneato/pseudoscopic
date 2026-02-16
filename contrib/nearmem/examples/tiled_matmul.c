@@ -122,7 +122,7 @@ static void matmul_nearmem_tiled(nearmem_ctx_t *ctx,
                                   size_t M, size_t N, size_t K,
                                   size_t tile_size)
 {
-    nm_tile_2d_t A_tile, B_tile, C_tile;
+    nm_tile_2d_t A_tile, C_tile;
     nm_tile_iterator_t A_iter, C_iter;
     double start, end;
     

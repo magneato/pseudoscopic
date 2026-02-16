@@ -167,6 +167,8 @@ static int find_psdisk(char *path, size_t path_len)
     while ((entry = readdir(dir)) != NULL) {
         if (strncmp(entry->d_name, "psdisk", 6) == 0 ||
             strncmp(entry->d_name, "pswap", 5) == 0) {
+            if (strlen(entry->d_name) + 6 > path_len)
+                continue;  /* Name too long, skip */
             snprintf(path, path_len, "/dev/%s", entry->d_name);
             closedir(dir);
             return 0;
@@ -340,9 +342,6 @@ static int find_pseudoscopic_pci(char *buf, size_t buf_len)
 {
     DIR *dir;
     struct dirent *entry;
-    char driver_link[512];
-    char target[512];
-    ssize_t len;
     
     dir = opendir("/sys/bus/pci/drivers/pseudoscopic");
     if (!dir)
@@ -351,7 +350,10 @@ static int find_pseudoscopic_pci(char *buf, size_t buf_len)
     while ((entry = readdir(dir)) != NULL) {
         /* Look for PCI addresses like 0000:06:00.0 */
         if (entry->d_name[0] == '0' && strchr(entry->d_name, ':')) {
-            snprintf(buf, buf_len, "%s", entry->d_name);
+            size_t name_len = strlen(entry->d_name);
+            if (name_len >= buf_len)
+                continue;  /* Name too long, skip */
+            memcpy(buf, entry->d_name, name_len + 1);
             closedir(dir);
             return 0;
         }
@@ -378,7 +380,7 @@ nearmem_error_t nearmem_init_bar1(nearmem_ctx_t *ctx,
                                    const char *pci_addr,
                                    int cuda_device)
 {
-    char pci_buf[64];
+    char pci_buf[256];
     char bar1_path[256];
     struct stat st;
     int fd;

@@ -52,7 +52,7 @@ LDFLAGS := -ldl -lpthread
 ifneq ($(CUDA_AVAILABLE),)
   ifneq ($(CUDA_LIB_DIR),)
     CUDA_ENABLED := yes
-    NVCCFLAGS := -O2 -Xcompiler -fPIC -I./include
+    NVCCFLAGS := -O2 -Xcompiler -fPIC -I./include -Wno-deprecated-gpu-targets
     LDFLAGS += -L$(CUDA_LIB_DIR) -lcuda
     CFLAGS += -DNEARMEM_HAS_CUDA
     # Also add CUDA toolkit lib path for other CUDA libs (cudart)

@@ -496,8 +496,8 @@ signal_trace_t *abyssal_trace_forward(abyssal_ctx_t *ctx, wire_id_t wire, uint64
                 trace->steps[trace->num_steps].depth = current_depth + 1;
                 trace->num_steps++;
                 
-                if (current_depth + 1 > trace->max_depth)
-                    trace->max_depth = current_depth + 1;
+                if ((uint32_t)(current_depth + 1) > trace->max_depth)
+                    trace->max_depth = (uint32_t)(current_depth + 1);
             }
         }
         

@@ -316,6 +316,7 @@ void gpucpu_set_reg(gpucpu_ctx_t *ctx, int reg, uint64_t value) {
 
 /* Calculate linear address from segment:offset */
 static inline uint32_t real_addr(x86_state_t *s, uint16_t seg, uint16_t off) {
+    (void)s;  /* State not needed for linear address calculation */
     return ((uint32_t)seg << 4) + off;
 }
 

@@ -232,6 +232,7 @@ static void demo_transform(nearmem_ctx_t *ctx, nearmem_region_t *region,
  */
 static void demo_zero_copy_comparison(nearmem_ctx_t *ctx, size_t data_size)
 {
+    (void)ctx;  /* Theoretical analysis only - ctx reserved for future use */
     printf("\n=== Demo 4: Zero-Copy Analysis ===\n");
     printf("Data size: %zu MB\n", data_size >> 20);
     
@@ -305,7 +306,7 @@ int main(int argc, char *argv[])
 {
     nearmem_ctx_t ctx;
     nearmem_region_t logs;
-    const char *device_path;
+    const char *device_path = NULL;
     const char *pattern = "ERROR";
     char size_str[64];
     int err;
@@ -314,10 +315,6 @@ int main(int argc, char *argv[])
     printf("║     Near-Memory Computing Demo - Log Analyzer                ║\n");
     printf("║     Data doesn't move. Computation comes to the data.        ║\n");
     printf("╚══════════════════════════════════════════════════════════════╝\n");
-    
-    /* Parse arguments */
-    const char *device_path = NULL;
-    const char *pattern = "ERROR";
 
     if (argc > 1) {
         if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {

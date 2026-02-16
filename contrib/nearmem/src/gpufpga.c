@@ -812,6 +812,7 @@ int gpufpga_thermal_init(gpufpga_ctx_t *ctx, const gpufpga_thermal_params_t *par
     /* For now, use a simple approach with a global pointer */
     static gpufpga_thermal_state_t *g_thermal = NULL;
     g_thermal = thermal;
+    (void)g_thermal;  /* Stored for access by gpufpga_thermal_step */
     
     printf("gpufpga: Thermal management initialized\n");
     printf("  Zones: %u\n", thermal->num_zones);
@@ -1040,7 +1041,7 @@ static void skip_whitespace_and_comments(verilog_lexer_t *lex) {
             continue;
         }
         
-        /* Skip /* comments */
+        /* Skip block comments */
         if (lex->ptr[0] == '/' && lex->ptr[1] == '*') {
             lex->ptr += 2;
             while (*lex->ptr && !(lex->ptr[0] == '*' && lex->ptr[1] == '/')) {
@@ -1339,6 +1340,7 @@ int gpufpga_load_verilog(gpufpga_ctx_t *ctx,
             verilog_next_token(&parser.lex);  /* target */
             char target[64];
             strncpy(target, parser.lex.token_buf, 63);
+            target[63] = '\0';
             
             verilog_next_token(&parser.lex);  /* = */
             verilog_next_token(&parser.lex);  /* expr start */
@@ -1391,6 +1393,7 @@ int gpufpga_load_verilog(gpufpga_ctx_t *ctx,
             verilog_next_token(&parser.lex);  /* output */
             char out_name[64];
             strncpy(out_name, parser.lex.token_buf, 63);
+            out_name[63] = '\0';
             
             verilog_next_token(&parser.lex);  /* , */
             verilog_next_token(&parser.lex);  /* input1 */

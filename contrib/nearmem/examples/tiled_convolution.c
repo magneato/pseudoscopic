@@ -113,6 +113,8 @@ static void convolve_tile_cpu(const float *input,
 {
     /* Input includes halo, output does not */
     size_t input_w = tile_w + 2 * halo;
+    (void)input_pitch;   /* Pitch derived from tile_w + 2*halo */
+    (void)output_pitch;  /* Pitch derived from tile_w */
     
     for (size_t y = 0; y < tile_h; y++) {
         for (size_t x = 0; x < tile_w; x++) {
@@ -348,6 +350,11 @@ int main(int argc, char *argv[])
     size_t tile_w = 256;
     size_t tile_h = 256;
     const conv_kernel_t *kernel = &sobel_x;
+    
+    /* Suppress unused warnings - these are valid kernels available for selection */
+    (void)sobel_y;
+    (void)gaussian;
+    (void)sharpen;
     
     printf("╔══════════════════════════════════════════════════════════════╗\n");
     printf("║     Tiled Convolution Demo                                   ║\n");

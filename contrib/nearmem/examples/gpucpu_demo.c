@@ -244,24 +244,15 @@ int main(int argc, char *argv[]) {
     /* Initialize GPU-CPU emulator */
     printf("\nInitializing GPU-CPU emulator...\n");
     
-    if (use_vram) {
-        err = gpucpu_init(&cpu_ctx, &nm_ctx, ram_size);
-        if (err != 0) {
-            printf("Failed to initialize GPU-CPU\n");
-            nearmem_shutdown(&nm_ctx);
-            return 1;
-        }
-    } else {
-        /* Fallback: allocate in system RAM */
-        memset(&cpu_ctx, 0, sizeof(cpu_ctx));
-        cpu_ctx.state = calloc(1, sizeof(x86_state_t));
-        cpu_ctx.ram = calloc(1, ram_size);
-        cpu_ctx.memory.ram_size = ram_size;
-        cpu_ctx.memory.nm_ctx = &nm_ctx;
+    err = gpucpu_init(&cpu_ctx, &nm_ctx, ram_size);
+    if (err != 0) {
+        printf("Failed to initialize GPU-CPU\n");
+        nearmem_shutdown(&nm_ctx);
+        return 1;
     }
     
-    printf("  x86 state: %s\n", use_vram ? "In VRAM (via BAR1)" : "In system RAM");
-    printf("  Guest RAM: %s\n", use_vram ? "In VRAM (via BAR1)" : "In system RAM");
+    printf("  x86 state: In VRAM (via BAR1)\n");
+    printf("  Guest RAM: In VRAM (via BAR1)\n");
     printf("  Execution: %s\n", cpu_ctx.use_gpu ? "GPU kernel (CUDA)" : "CPU fallback");
     
     /* Run test programs */
@@ -324,13 +315,8 @@ int main(int argc, char *argv[]) {
     printf("🍪 Cookie Monster approves.\n\n");
     
     /* Cleanup */
-    if (use_vram) {
-        gpucpu_shutdown(&cpu_ctx);
-        nearmem_shutdown(&nm_ctx);
-    } else {
-        free(cpu_ctx.state);
-        free(cpu_ctx.ram);
-    }
+    gpucpu_shutdown(&cpu_ctx);
+    nearmem_shutdown(&nm_ctx);
     
     return 0;
 }

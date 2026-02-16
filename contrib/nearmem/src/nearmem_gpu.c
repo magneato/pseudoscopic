@@ -81,7 +81,7 @@ static uint64_t read_sysfs_hex(const char *path) {
 
 /* Parse PCI resource file for BAR addresses */
 static int parse_pci_resource(const char *pci_path, uint64_t *bar1_base, uint64_t *bar1_size) {
-    char resource_path[512];
+    char resource_path[768];
     snprintf(resource_path, sizeof(resource_path), "%s/resource", pci_path);
     
     FILE *f = fopen(resource_path, "r");
@@ -143,7 +143,11 @@ static void enumerate_gpus_internal(void) {
         gpu->index = g_gpu_count;
         gpu->vendor_id = 0x10DE;
         
-        strncpy(gpu->pci_address, entry->d_name, sizeof(gpu->pci_address) - 1);
+        /* Copy PCI address - valid addresses are always ≤15 chars */
+        size_t d_name_len = strlen(entry->d_name);
+        if (d_name_len >= sizeof(gpu->pci_address))
+            continue;  /* Name too long for a valid PCI address */
+        memcpy(gpu->pci_address, entry->d_name, d_name_len + 1);
         
         /* Read device ID */
         snprintf(path, sizeof(path), "%s/%s/device", pci_base, entry->d_name);
