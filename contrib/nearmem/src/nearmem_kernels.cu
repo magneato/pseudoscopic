@@ -19,6 +19,35 @@
 /* Block sizes tuned for modern GPUs */
 #define BLOCK_SIZE 256
 #define WARP_SIZE 32
+#define FULL_MASK 0xFFFFFFFF
+
+/*
+ * Warp-level reduction helpers using shuffle intrinsics.
+ * These avoid shared memory and __syncthreads for the final 32 elements.
+ */
+__device__ __forceinline__ float warp_reduce_sum(float val) {
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+        val += __shfl_down_sync(FULL_MASK, val, offset);
+    return val;
+}
+
+__device__ __forceinline__ uint32_t warp_reduce_sum_u32(uint32_t val) {
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+        val += __shfl_down_sync(FULL_MASK, val, offset);
+    return val;
+}
+
+__device__ __forceinline__ uint32_t warp_reduce_min(uint32_t val) {
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+        val = min(val, __shfl_down_sync(FULL_MASK, val, offset));
+    return val;
+}
+
+__device__ __forceinline__ uint32_t warp_reduce_max(uint32_t val) {
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+        val = max(val, __shfl_down_sync(FULL_MASK, val, offset));
+    return val;
+}
 
 /*
  * ============================================================
@@ -181,6 +210,7 @@ __global__ void to_uppercase_kernel(uint8_t *data, size_t size)
  * histogram_kernel - Compute byte histogram
  *
  * Uses shared memory histograms per block, then atomic merge.
+ * Vectorized: loads 4 bytes at a time for better memory throughput.
  */
 __global__ void histogram_kernel(const uint8_t *data,
                                   size_t size,
@@ -193,12 +223,25 @@ __global__ void histogram_kernel(const uint8_t *data,
         shared_hist[i] = 0;
     __syncthreads();
     
-    /* Count into shared memory */
+    /* Count into shared memory - vectorized 4 bytes at a time */
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     size_t stride = gridDim.x * blockDim.x;
     
-    for (size_t i = idx; i < size; i += stride)
-        atomicAdd(&shared_hist[data[i]], 1);
+    /* Process aligned 4-byte chunks */
+    size_t aligned_size = size & ~3ULL;
+    for (size_t i = idx * 4; i < aligned_size; i += stride * 4) {
+        uint32_t word = *(const uint32_t*)(data + i);
+        atomicAdd(&shared_hist[(word >>  0) & 0xFF], 1);
+        atomicAdd(&shared_hist[(word >>  8) & 0xFF], 1);
+        atomicAdd(&shared_hist[(word >> 16) & 0xFF], 1);
+        atomicAdd(&shared_hist[(word >> 24) & 0xFF], 1);
+    }
+    
+    /* Handle tail bytes */
+    if (idx == 0) {
+        for (size_t i = aligned_size; i < size; i++)
+            atomicAdd(&shared_hist[data[i]], 1);
+    }
     
     __syncthreads();
     
@@ -210,50 +253,60 @@ __global__ void histogram_kernel(const uint8_t *data,
 /*
  * reduce_sum_f32_kernel - Parallel sum reduction
  *
- * Two-phase: block-level reduction, then grid-level.
+ * Two-phase: block-level reduction with warp shuffles, then grid-level.
  */
 __global__ void reduce_sum_f32_kernel(const float *data,
                                        size_t count,
                                        float *partial_sums)
 {
-    __shared__ float shared_data[BLOCK_SIZE];
+    __shared__ float shared_data[BLOCK_SIZE / WARP_SIZE]; /* One slot per warp */
     
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     size_t stride = gridDim.x * blockDim.x;
+    int lane = threadIdx.x % WARP_SIZE;
+    int warp_id = threadIdx.x / WARP_SIZE;
     
     /* Load and accumulate across grid */
     float sum = 0;
     for (size_t i = idx; i < count; i += stride)
         sum += data[i];
     
-    shared_data[threadIdx.x] = sum;
+    /* Warp-level reduction via shuffle (no shared memory needed) */
+    sum = warp_reduce_sum(sum);
+    
+    /* First lane of each warp writes to shared memory */
+    if (lane == 0)
+        shared_data[warp_id] = sum;
     __syncthreads();
     
-    /* Block-level reduction */
-    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-        if (threadIdx.x < s)
-            shared_data[threadIdx.x] += shared_data[threadIdx.x + s];
-        __syncthreads();
-    }
+    /* Final reduction: first warp reduces all warp results */
+    int num_warps = blockDim.x / WARP_SIZE;
+    sum = (threadIdx.x < num_warps) ? shared_data[threadIdx.x] : 0.0f;
+    if (warp_id == 0)
+        sum = warp_reduce_sum(sum);
     
     /* Write block result */
     if (threadIdx.x == 0)
-        partial_sums[blockIdx.x] = shared_data[0];
+        partial_sums[blockIdx.x] = sum;
 }
 
 /*
  * reduce_minmax_u32_kernel - Find min and max in parallel
+ *
+ * Uses warp shuffle for final reduction phase.
  */
 __global__ void reduce_minmax_u32_kernel(const uint32_t *data,
                                           size_t count,
                                           uint32_t *min_out,
                                           uint32_t *max_out)
 {
-    __shared__ uint32_t shared_min[BLOCK_SIZE];
-    __shared__ uint32_t shared_max[BLOCK_SIZE];
+    __shared__ uint32_t shared_min[BLOCK_SIZE / WARP_SIZE];
+    __shared__ uint32_t shared_max[BLOCK_SIZE / WARP_SIZE];
     
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     size_t stride = gridDim.x * blockDim.x;
+    int lane = threadIdx.x % WARP_SIZE;
+    int warp_id = threadIdx.x / WARP_SIZE;
     
     uint32_t local_min = UINT32_MAX;
     uint32_t local_max = 0;
@@ -264,23 +317,29 @@ __global__ void reduce_minmax_u32_kernel(const uint32_t *data,
         if (val > local_max) local_max = val;
     }
     
-    shared_min[threadIdx.x] = local_min;
-    shared_max[threadIdx.x] = local_max;
+    /* Warp-level reduction */
+    local_min = warp_reduce_min(local_min);
+    local_max = warp_reduce_max(local_max);
+    
+    if (lane == 0) {
+        shared_min[warp_id] = local_min;
+        shared_max[warp_id] = local_max;
+    }
     __syncthreads();
     
-    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-        if (threadIdx.x < s) {
-            if (shared_min[threadIdx.x + s] < shared_min[threadIdx.x])
-                shared_min[threadIdx.x] = shared_min[threadIdx.x + s];
-            if (shared_max[threadIdx.x + s] > shared_max[threadIdx.x])
-                shared_max[threadIdx.x] = shared_max[threadIdx.x + s];
-        }
-        __syncthreads();
+    /* Final reduction by first warp */
+    int num_warps = blockDim.x / WARP_SIZE;
+    local_min = (threadIdx.x < num_warps) ? shared_min[threadIdx.x] : UINT32_MAX;
+    local_max = (threadIdx.x < num_warps) ? shared_max[threadIdx.x] : 0;
+    
+    if (warp_id == 0) {
+        local_min = warp_reduce_min(local_min);
+        local_max = warp_reduce_max(local_max);
     }
     
     if (threadIdx.x == 0) {
-        atomicMin(min_out, shared_min[0]);
-        atomicMax(max_out, shared_max[0]);
+        atomicMin(min_out, local_min);
+        atomicMax(max_out, local_max);
     }
 }
 

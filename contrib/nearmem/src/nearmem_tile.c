@@ -462,29 +462,44 @@ static void tile_prefetch_2d(nm_tile_2d_t *tile,
     size_t fetch_end_x = start_x + tile->tile_w + tile->halo_x;
     size_t fetch_end_y = start_y + tile->tile_h + tile->halo_y;
     
-    if (fetch_end_x > tile->width) fetch_end_x = tile->width;
-    if (fetch_end_y > tile->height) fetch_end_y = tile->height;
+    /* Boundary clamps: typically not taken for interior tiles */
+    if (__builtin_expect(fetch_end_x > tile->width, 0))  fetch_end_x = tile->width;
+    if (__builtin_expect(fetch_end_y > tile->height, 0)) fetch_end_y = tile->height;
     
     size_t fetch_w = fetch_end_x - fetch_start_x;
     size_t fetch_h = fetch_end_y - fetch_start_y;
+    size_t row_bytes = fetch_w * tile->element_size;
     
-    /* Copy rows from VRAM to buffer */
     char *src_base = (char*)tile->region->cpu_ptr;
     char *dst_base = buffer;
     
     double start_time = get_time_us();
     
-    /* Sync VRAM → CPU before reading */
-    nearmem_sync(tile->ctx, NEARMEM_SYNC_GPU_TO_CPU);
+    /*
+     * NOTE: We do NOT call nearmem_sync() per-tile.
+     * The iteration begin function (nm_tile_2d_begin) handles the
+     * initial sync. Per-tile syncs are redundant and expensive
+     * for BAR1/WC-mapped memory where reads always hit VRAM.
+     * A memory fence is sufficient to order reads after any prior
+     * writes within the same iteration scope.
+     */
+    __sync_synchronize();
     
     for (size_t row = 0; row < fetch_h; row++) {
         size_t src_offset = (fetch_start_y + row) * tile->pitch + 
                             fetch_start_x * tile->element_size;
-        size_t dst_offset = row * fetch_w * tile->element_size;
+        size_t dst_offset = row * row_bytes;
+        
+        /* Prefetch next row's source data while copying current row */
+        if (__builtin_expect(row + 1 < fetch_h, 1)) {
+            size_t next_src = (fetch_start_y + row + 1) * tile->pitch + 
+                              fetch_start_x * tile->element_size;
+            __builtin_prefetch(src_base + next_src, 0, 1);
+        }
         
         memcpy(dst_base + dst_offset, 
                src_base + src_offset, 
-               fetch_w * tile->element_size);
+               row_bytes);
     }
     
     iter->prefetch_time_us += get_time_us() - start_time;

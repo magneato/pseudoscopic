@@ -384,10 +384,8 @@ static void update_flags_8(x86_state_t *s, uint8_t result, int carry, int overfl
     if (result == 0) s->rflags |= FLAG_ZF;
     if (result & 0x80) s->rflags |= FLAG_SF;
     
-    /* Parity flag: set if even number of 1 bits in low byte */
-    int bits = 0;
-    for (int i = 0; i < 8; i++) if (result & (1 << i)) bits++;
-    if ((bits & 1) == 0) s->rflags |= FLAG_PF;
+    /* PF: set if EVEN number of 1 bits in low byte */
+    if (!__builtin_parity(result & 0xFF)) s->rflags |= FLAG_PF;
 }
 
 static void update_flags_16(x86_state_t *s, uint16_t result, int carry, int overflow) {
@@ -398,9 +396,8 @@ static void update_flags_16(x86_state_t *s, uint16_t result, int carry, int over
     if (result == 0) s->rflags |= FLAG_ZF;
     if (result & 0x8000) s->rflags |= FLAG_SF;
     
-    int bits = 0;
-    for (int i = 0; i < 8; i++) if (result & (1 << i)) bits++;
-    if ((bits & 1) == 0) s->rflags |= FLAG_PF;
+    /* PF: parity of LOW byte only (x86 convention) */
+    if (!__builtin_parity(result & 0xFF)) s->rflags |= FLAG_PF;
 }
 
 /* Get register pointer by index (16-bit mode) */

@@ -128,15 +128,19 @@ enum class Usage : uint32_t {
     PREFETCH_DISABLE = 1 << 21, /**< Disable automatic prefetch */
 };
 
-inline Usage operator|(Usage a, Usage b) {
+inline constexpr Usage operator|(Usage a, Usage b) noexcept {
     return static_cast<Usage>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
 }
 
-inline Usage operator&(Usage a, Usage b) {
+inline constexpr Usage operator&(Usage a, Usage b) noexcept {
     return static_cast<Usage>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
 }
 
-inline bool has_flag(Usage usage, Usage flag) {
+inline constexpr Usage& operator|=(Usage& a, Usage b) noexcept {
+    return a = a | b;
+}
+
+inline constexpr bool has_flag(Usage usage, Usage flag) noexcept {
     return (static_cast<uint32_t>(usage) & static_cast<uint32_t>(flag)) != 0;
 }
 
@@ -343,7 +347,7 @@ public:
      */
     void sync_to_gpu() {
         if (ctx_ && region_) {
-            nearmem_sync(ctx_, NEARMEM_SYNC_CPU_TO_GPU);
+            nearmem_sync_region(ctx_, region_.get(), NEARMEM_SYNC_CPU_TO_GPU);
         }
     }
     
@@ -352,7 +356,18 @@ public:
      */
     void sync_to_cpu() {
         if (ctx_ && region_) {
-            nearmem_sync(ctx_, NEARMEM_SYNC_GPU_TO_CPU);
+            nearmem_sync_region(ctx_, region_.get(), NEARMEM_SYNC_GPU_TO_CPU);
+        }
+    }
+    
+    /**
+     * Software prefetch hint for CPU-side sequential access.
+     * Call before iterating to prime the CPU cache hierarchy.
+     * @param offset Element offset to prefetch ahead
+     */
+    void prefetch(size_type offset, int locality = 1) const noexcept {
+        if (data() && offset < count_) {
+            __builtin_prefetch(data() + offset, /* rw=read */ 0, locality);
         }
     }
     
@@ -605,7 +620,10 @@ public:
         , gpu_index_(other.gpu_index_)
         , memman_(std::move(other.memman_))
     {
+        // Zero the source context to prevent double-shutdown.
+        // Critical: initialized must be false so nearmem_shutdown is a no-op.
         other.ctx_ = {};
+        other.ctx_.initialized = false;
         other.gpu_index_ = -1;
     }
     
@@ -683,8 +701,7 @@ public:
      * Full bidirectional sync
      */
     void sync() {
-        sync_to_gpu();
-        sync_to_cpu();
+        nearmem_sync(&ctx_, NEARMEM_SYNC_FULL);
     }
     
     /* ═══════ Device Information ═══════ */
@@ -765,6 +782,42 @@ inline uint64_t vram_base(int gpu_index) {
 inline uint64_t vram_size(int gpu_index) {
     return nearmem_gpu_get_vram_size(gpu_index);
 }
+
+/*
+ * ════════════════════════════════════════════════════════════════════════════
+ * SYNC GUARD - RAII scoped synchronization
+ * ════════════════════════════════════════════════════════════════════════════
+ */
+
+/**
+ * SyncGuard: RAII helper that syncs CPU→GPU on construction
+ * and GPU→CPU on destruction. Perfect for scoped compute phases.
+ *
+ * Usage:
+ *   {
+ *       nearmem::SyncGuard guard(ctx);  // flushes CPU writes
+ *       launch_kernel(...);
+ *   }  // automatically syncs GPU results back to CPU
+ */
+class SyncGuard {
+public:
+    explicit SyncGuard(Context& ctx, nearmem_sync_t entry_sync = NEARMEM_SYNC_CPU_TO_GPU)
+        : ctx_(ctx)
+    {
+        if (entry_sync == NEARMEM_SYNC_CPU_TO_GPU || entry_sync == NEARMEM_SYNC_FULL)
+            ctx_.sync_to_gpu();
+    }
+
+    ~SyncGuard() {
+        ctx_.sync_to_cpu();
+    }
+
+    SyncGuard(const SyncGuard&) = delete;
+    SyncGuard& operator=(const SyncGuard&) = delete;
+
+private:
+    Context& ctx_;
+};
 
 } // namespace nearmem
 

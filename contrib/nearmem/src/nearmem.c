@@ -224,18 +224,11 @@ nearmem_error_t nearmem_init(nearmem_ctx_t *ctx,
         }
     }
     
-    /* Allocate internal context */
-    ictx = calloc(1, sizeof(*ictx));
-    if (!ictx)
-        return NEARMEM_ERROR_INIT;
-    
-    /* Copy public portion back */
     memset(ctx, 0, sizeof(*ctx));
     
 #ifndef NEARMEM_USE_CUDA_HEADERS
     /* Load CUDA library */
     if (load_cuda() != 0) {
-        free(ictx);
         return NEARMEM_ERROR_CUDA;
     }
 #endif
@@ -244,7 +237,6 @@ nearmem_error_t nearmem_init(nearmem_ctx_t *ctx,
     cu_err = cuInit(0);
     if (cu_err != CUDA_SUCCESS) {
         fprintf(stderr, "nearmem: cuInit failed: %d\n", cu_err);
-        free(ictx);
         return NEARMEM_ERROR_CUDA;
     }
     
@@ -252,7 +244,6 @@ nearmem_error_t nearmem_init(nearmem_ctx_t *ctx,
     cu_err = cuDeviceGet(&cu_dev, cuda_device);
     if (cu_err != CUDA_SUCCESS) {
         fprintf(stderr, "nearmem: cuDeviceGet(%d) failed: %d\n", cuda_device, cu_err);
-        free(ictx);
         return NEARMEM_ERROR_CUDA;
     }
     
@@ -260,7 +251,6 @@ nearmem_error_t nearmem_init(nearmem_ctx_t *ctx,
     cu_err = cuCtxCreate((CUcontext*)&ctx->cuda_ctx, 0, cu_dev);
     if (cu_err != CUDA_SUCCESS) {
         fprintf(stderr, "nearmem: cuCtxCreate failed: %d\n", cu_err);
-        free(ictx);
         return NEARMEM_ERROR_CUDA;
     }
     
@@ -270,7 +260,6 @@ nearmem_error_t nearmem_init(nearmem_ctx_t *ctx,
         fprintf(stderr, "nearmem: failed to open %s: %s\n", 
                 device_path, strerror(errno));
         cuCtxDestroy(ctx->cuda_ctx);
-        free(ictx);
         return NEARMEM_ERROR_NO_DEVICE;
     }
     
@@ -280,7 +269,6 @@ nearmem_error_t nearmem_init(nearmem_ctx_t *ctx,
         fprintf(stderr, "nearmem: failed to get device size\n");
         close(fd);
         cuCtxDestroy(ctx->cuda_ctx);
-        free(ictx);
         return NEARMEM_ERROR_NO_DEVICE;
     }
     
@@ -300,21 +288,33 @@ nearmem_error_t nearmem_init(nearmem_ctx_t *ctx,
         fprintf(stderr, "nearmem: mmap failed: %s\n", strerror(errno));
         close(fd);
         cuCtxDestroy(ctx->cuda_ctx);
-        free(ictx);
         return NEARMEM_ERROR_MMAP;
     }
     
     /* Advise kernel about access pattern */
     madvise(mapped, size, MADV_SEQUENTIAL);
     
-    /* Fill in context */
+    /* Fill in public context */
     ctx->ps_fd = fd;
     ctx->ps_base = mapped;
     ctx->ps_size = size;
     ctx->cuda_device = cuda_device;
     ctx->initialized = true;
     
-    /* Initialize internal state */
+    /*
+     * Allocate internal context and link it.
+     * The ictx extends the public ctx; we store a snapshot of the public
+     * portion as the first member so get_internal_ctx() can cast safely.
+     * NOTE: The bump allocator state lives here, not in the public ctx.
+     */
+    ictx = calloc(1, sizeof(*ictx));
+    if (!ictx) {
+        fprintf(stderr, "nearmem: failed to allocate internal context\n");
+        munmap(mapped, size);
+        close(fd);
+        cuCtxDestroy(ctx->cuda_ctx);
+        return NEARMEM_ERROR_INIT;
+    }
     ictx->public = *ctx;
     ictx->alloc_offset = 0;
     
@@ -626,15 +626,24 @@ nearmem_error_t nearmem_sync(nearmem_ctx_t *ctx, nearmem_sync_t type)
         /*
          * Wait for all GPU operations to complete.
          */
-        cuCtxSynchronize();
+        if (cuCtxSynchronize)
+            cuCtxSynchronize();
         
         /*
-         * Invalidate CPU caches. For mmap'd device memory,
-         * the kernel handles this when we access the pages.
-         * But we can hint with madvise.
+         * CPU cache invalidation for device-mapped memory.
+         *
+         * CRITICAL: Do NOT use MADV_DONTNEED here! On Linux, that
+         * tells the kernel to DISCARD the pages, destroying any data
+         * the GPU wrote. For device-mapped (BAR1) pages, the mapping
+         * is typically uncacheable/write-combining anyway, so CPU
+         * cache stales are not a concern. A full memory barrier is
+         * sufficient to order subsequent reads after the GPU sync.
+         *
+         * If the mapping uses write-back caching (rare for BAR1),
+         * we would need per-cacheline clflush. But for the common
+         * MAP_SHARED + O_SYNC path, __sync_synchronize is enough.
          */
-        if (ctx->ps_base && ctx->ps_size > 0)
-            madvise(ctx->ps_base, ctx->ps_size, MADV_DONTNEED);
+        __sync_synchronize();
         break;
         
     case NEARMEM_SYNC_FULL:
@@ -656,12 +665,15 @@ nearmem_error_t nearmem_sync_region(nearmem_ctx_t *ctx,
     switch (type) {
     case NEARMEM_SYNC_CPU_TO_GPU:
         __sync_synchronize();
-        msync(region->cpu_ptr, region->size, MS_SYNC);
+        if (region->cpu_ptr && region->size > 0)
+            msync(region->cpu_ptr, region->size, MS_SYNC);
         break;
         
     case NEARMEM_SYNC_GPU_TO_CPU:
-        cuCtxSynchronize();
-        madvise(region->cpu_ptr, region->size, MADV_DONTNEED);
+        if (cuCtxSynchronize)
+            cuCtxSynchronize();
+        /* See nearmem_sync() comment: no MADV_DONTNEED on device memory */
+        __sync_synchronize();
         break;
         
     case NEARMEM_SYNC_FULL:
@@ -795,21 +807,42 @@ nearmem_error_t nearmem_find(nearmem_ctx_t *ctx,
                               int64_t *result)
 {
     /*
-     * For prototype: fall back to CPU search
-     * Production: launch GPU kernel for parallel search
+     * CPU fallback with prefetch hints.
+     * For single-byte patterns, use memchr for libc-optimized SIMD.
+     * Production: launch GPU kernel for parallel search.
      */
     const uint8_t *data = region->cpu_ptr;
     const uint8_t *pat = pattern;
-    size_t i, j;
+    
+    if (!data || !pat || pattern_len == 0 || pattern_len > region->size) {
+        *result = -1;
+        return NEARMEM_OK;
+    }
     
     nearmem_sync(ctx, NEARMEM_SYNC_GPU_TO_CPU);
     
-    for (i = 0; i <= region->size - pattern_len; i++) {
-        for (j = 0; j < pattern_len; j++) {
-            if (data[i + j] != pat[j])
-                break;
-        }
-        if (j == pattern_len) {
+    /* Fast path: single-byte search via libc memchr (SSE/AVX optimized) */
+    if (pattern_len == 1) {
+        const void *found = memchr(data, pat[0], region->size);
+        *result = found ? (const uint8_t*)found - data : -1;
+        return NEARMEM_OK;
+    }
+    
+    /* Multi-byte: scan with first-byte filter + software prefetch */
+    size_t end = region->size - pattern_len;
+    uint8_t first = pat[0];
+    
+    for (size_t i = 0; i <= end; i++) {
+        /* Prefetch 2 cache lines ahead (~128 bytes) */
+        if (__builtin_expect(i + 128 <= end, 1))
+            __builtin_prefetch(data + i + 128, 0, 0);
+            
+        /* First-byte filter: skip quickly if first byte doesn't match */
+        if (data[i] != first)
+            continue;
+        
+        /* Full pattern comparison (skip first byte, already matched) */
+        if (memcmp(data + i + 1, pat + 1, pattern_len - 1) == 0) {
             *result = i;
             return NEARMEM_OK;
         }
@@ -827,17 +860,26 @@ nearmem_error_t nearmem_count_matches(nearmem_ctx_t *ctx,
 {
     const uint8_t *data = region->cpu_ptr;
     const uint8_t *pat = pattern;
-    size_t i, j;
     uint64_t cnt = 0;
+    
+    if (!data || !pat || pattern_len == 0 || pattern_len > region->size) {
+        *count = 0;
+        return NEARMEM_OK;
+    }
     
     nearmem_sync(ctx, NEARMEM_SYNC_GPU_TO_CPU);
     
-    for (i = 0; i <= region->size - pattern_len; i++) {
-        for (j = 0; j < pattern_len; j++) {
-            if (data[i + j] != pat[j])
-                break;
-        }
-        if (j == pattern_len)
+    size_t end = region->size - pattern_len;
+    uint8_t first = pat[0];
+    
+    for (size_t i = 0; i <= end; i++) {
+        if (__builtin_expect(i + 128 <= end, 1))
+            __builtin_prefetch(data + i + 128, 0, 0);
+        
+        if (data[i] != first)
+            continue;
+            
+        if (pattern_len == 1 || memcmp(data + i + 1, pat + 1, pattern_len - 1) == 0)
             cnt++;
     }
     
@@ -883,6 +925,14 @@ nearmem_error_t nearmem_histogram(nearmem_ctx_t *ctx,
     return NEARMEM_OK;
 }
 
+/* Portable comparator (the nested function was a GCC extension) */
+static int cmp_u32(const void *a, const void *b)
+{
+    uint32_t va = *(const uint32_t*)a;
+    uint32_t vb = *(const uint32_t*)b;
+    return (va > vb) - (va < vb);
+}
+
 nearmem_error_t nearmem_sort_u32(nearmem_ctx_t *ctx,
                                   nearmem_region_t *region,
                                   size_t count)
@@ -895,11 +945,7 @@ nearmem_error_t nearmem_sort_u32(nearmem_ctx_t *ctx,
     
     nearmem_sync(ctx, NEARMEM_SYNC_GPU_TO_CPU);
     
-    int cmp(const void *a, const void *b) {
-        return (*(uint32_t*)a > *(uint32_t*)b) - (*(uint32_t*)a < *(uint32_t*)b);
-    }
-    
-    qsort(data, count, sizeof(uint32_t), cmp);
+    qsort(data, count, sizeof(uint32_t), cmp_u32);
     
     nearmem_sync(ctx, NEARMEM_SYNC_CPU_TO_GPU);
     
@@ -912,13 +958,27 @@ nearmem_error_t nearmem_reduce_sum_f32(nearmem_ctx_t *ctx,
                                         float *result)
 {
     const float *data = region->cpu_ptr;
-    double sum = 0;
     size_t i;
     
     nearmem_sync(ctx, NEARMEM_SYNC_GPU_TO_CPU);
     
-    for (i = 0; i < count; i++)
-        sum += data[i];
+    /*
+     * Kahan compensated summation for better numerical accuracy.
+     * Important when accumulating many small floats over VRAM-sized buffers.
+     */
+    double sum = 0.0;
+    double comp = 0.0;  /* Running compensation for lost low-order bits */
+    
+    for (i = 0; i < count; i++) {
+        /* Prefetch: float is 4 bytes, cache line is 64, so 16 elements/line */
+        if (__builtin_expect(i + 64 < count, 1))
+            __builtin_prefetch(data + i + 64, 0, 1);
+        
+        double y = (double)data[i] - comp;
+        double t = sum + y;
+        comp = (t - sum) - y;
+        sum = t;
+    }
     
     *result = (float)sum;
     return NEARMEM_OK;

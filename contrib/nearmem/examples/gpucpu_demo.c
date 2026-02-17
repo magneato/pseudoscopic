@@ -305,7 +305,7 @@ int main(int argc, char *argv[]) {
     
     printf("NEURAL SPLINES CONNECTION:\n\n");
     
-    printf("• 128× compressed model (~500 MB for 70B params)\n");
+    printf("• 128x compressed model (~500 MB for 70B params)\n");
     printf("• Model weights live in VRAM\n");
     printf("• Inference logic runs on GPU-CPU\n");
     printf("• Control logic (tokenizer, sampling) also on GPU-CPU\n");

@@ -29,11 +29,11 @@ Traditional GPU computing suffers from this asymmetry:
     │                           THE TRADITIONAL DANCE                                │
     ├────────────────────────────────────────────────────────────────────────────────┤
     │                                                                                │
-    │    CPU RAM                                                         GPU VRAM   │
-    │   ┌────────┐                                                     ┌────────┐   │
-    │   │ 50 GB  │═══════════════════════════════════════════════════▶│ 50 GB  │   │
-    │   │ Data   │         Transfer @ 12 GB/s = 4.2 seconds           │ Data   │   │
-    │   └────────┘                                                     └────────┘   │
+    │    CPU RAM                                                         GPU VRAM    │
+    │   ┌────────┐                                                     ┌────────┐    │
+    │   │ 50 GB  │═══════════════════════════════════════════════════▶│ 50 GB   │    │
+    │   │ Data   │         Transfer @ 12 GB/s = 4.2 seconds           │ Data    │    │
+    │   └────────┘                                                     └────────┘    │
     │                                      │                                         │
     │                                      ▼                                         │
     │                              ┌──────────────┐                                  │
@@ -42,9 +42,9 @@ Traditional GPU computing suffers from this asymmetry:
     │                              └──────────────┘                                  │
     │                                      │                                         │
     │                                      ▼                                         │
-    │   ┌────────┐                                                     ┌────────┐   │
-    │   │ Result │◀═══════════════════════════════════════════════════│ Result │   │
-    │   └────────┘         Transfer @ 12 GB/s = variable               └────────┘   │
+    │   ┌────────┐                                                     ┌────────┐    │
+    │   │ Result │◀════════════════════════════════════════════════════│ Result │    │
+    │   └────────┘         Transfer @ 12 GB/s = variable               └────────┘    │
     │                                                                                │
     │   Total Pipeline: 4.4 seconds (Compute is 4.5% of time)                        │
     └────────────────────────────────────────────────────────────────────────────────┘
@@ -68,11 +68,11 @@ For a 50 GB dataset, you spend **4+ seconds** moving bytes across PCIe, then a m
     │                               GPU VRAM (via /dev/psdisk0)                      │
     │                              ┌─────────────────────────────┐                   │
     │                              │                             │                   │
-    │   CPU writes via mmap()  ──▶│         DATA LIVES HERE     │◀── GPU accesses  │
-    │   (directly to VRAM)        │                             │    natively       │
+    │   CPU writes via mmap()   ──▶│         DATA LIVES HERE     │◀── GPU accesses   │
+    │   (directly to VRAM)         │                             │    natively       │
     │                              │    Same physical memory     │                   │
-    │                              │    Two access paths          │                   │
-    │                              │    Zero round-trips          │                   │
+    │                              │    Two access paths         │                   │
+    │                              │    Zero round-trips         │                   │
     │                              │                             │                   │
     │                              └─────────────────────────────┘                   │
     │                                          │                                     │
@@ -104,23 +104,23 @@ How does one pointer address both CPU and GPU memory? The answer lies in a hardw
     │                                                                                 │
     │      ┌─────────────────────────────────────────────────────────────────┐        │
     │      │                         VRAM                                    │        │
-    │      │   ┌───────────────────────────────────────────────────────┐    │        │
-    │      │   │                                                       │    │        │
-    │      │   │        Your Data (50 GB of glorious bytes)            │    │        │
-    │      │   │                                                       │    │        │
-    │      │   │   GPU Internal Access: HBM2 @ 700 GB/s                │    │        │
-    │      │   │   (Native fabric, no PCIe involved)                   │    │        │
-    │      │   │                                                       │    │        │
-    │      │   └───────────────────────────────────────────────────────┘    │        │
+    │      │   ┌───────────────────────────────────────────────────────┐     │        │
+    │      │   │                                                       │     │        │
+    │      │   │        Your Data (50 GB of glorious bytes)            │     │        │
+    │      │   │                                                       │     │        │
+    │      │   │   GPU Internal Access: HBM2 @ 700 GB/s                │     │        │
+    │      │   │   (Native fabric, no PCIe involved)                   │     │        │
+    │      │   │                                                       │     │        │
+    │      │   └───────────────────────────────────────────────────────┘     │        │
     │      │                              │                                  │        │
-    │      │                              │ BAR1 Aperture                   │        │
-    │      │                              │ (PCIe Window)                   │        │
+    │      │                              │ BAR1 Aperture                    │        │
+    │      │                              │ (PCIe Window)                    │        │
     │      │                              │                                  │        │
     │      └──────────────────────────────┼──────────────────────────────────┘        │
     │                                     │                                           │
-    │ ════════════════════════════════════╪══════════════════════════════════════    │
+    │ ════════════════════════════════════╪══════════════════════════════════════     │
     │                              PCIe Bus                                           │
-    │ ════════════════════════════════════╪══════════════════════════════════════    │
+    │ ════════════════════════════════════╪══════════════════════════════════════     │
     │                                     │                                           │
     │                              ┌──────┴──────┐                                    │
     │                              │     CPU     │                                    │

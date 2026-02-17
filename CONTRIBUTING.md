@@ -1,12 +1,12 @@
 ```
     ╔═══════════════════════════════════════════════════════════════════════════════════╗
     ║                                                                                   ║
-    ║    ██████╗ ██████╗ ███╗   ██╗████████╗██████╗ ██╗██████╗ ██╗   ██╗████████╗███████╗║
-    ║   ██╔════╝██╔═══██╗████╗  ██║╚══██╔══╝██╔══██╗██║██╔══██╗██║   ██║╚══██╔══╝██╔════╝║
-    ║   ██║     ██║   ██║██╔██╗ ██║   ██║   ██████╔╝██║██████╔╝██║   ██║   ██║   █████╗  ║
-    ║   ██║     ██║   ██║██║╚██╗██║   ██║   ██╔══██╗██║██╔══██╗██║   ██║   ██║   ██╔══╝  ║
-    ║   ╚██████╗╚██████╔╝██║ ╚████║   ██║   ██║  ██║██║██████╔╝╚██████╔╝   ██║   ███████╗║
-    ║    ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═════╝  ╚═════╝    ╚═╝   ╚══════╝║
+    ║   ██████╗ ██████╗ ███╗   ██╗████████╗██████╗ ██╗██████╗ ██╗   ██╗████████╗███████╗║
+    ║  ██╔════╝██╔═══██╗████╗  ██║╚══██╔══╝██╔══██╗██║██╔══██╗██║   ██║╚══██╔══╝██╔════╝║
+    ║  ██║     ██║   ██║██╔██╗ ██║   ██║   ██████╔╝██║██████╔╝██║   ██║   ██║   █████╗  ║
+    ║  ██║     ██║   ██║██║╚██╗██║   ██║   ██╔══██╗██║██╔══██╗██║   ██║   ██║   ██╔══╝  ║
+    ║  ╚██████╗╚██████╔╝██║ ╚████║   ██║   ██║  ██║██║██████╔╝╚██████╔╝   ██║   ███████╗║
+    ║   ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═════╝  ╚═════╝    ╚═╝   ╚══════╝║
     ║                                                                                   ║
     ║               Guidelines for Those Who Wish to Shape the Future                   ║
     ╚═══════════════════════════════════════════════════════════════════════════════════╝
@@ -31,18 +31,18 @@ Every line of code must earn its place. Like a haiku, we seek to express maximum
     │                       PSEUDOSCOPIC CODE PHILOSOPHY                          │
     ├─────────────────────────────────────────────────────────────────────────────┤
     │                                                                             │
-    │   ╔═══════════════╗    ╔═══════════════╗    ╔═══════════════╗              │
-    │   ║   MINIMAL     ║    ║  BULLETPROOF  ║    ║   BEAUTIFUL   ║              │
-    │   ║   SURFACE     ║    ║  RELIABILITY  ║    ║   IN CODE     ║              │
-    │   ║   AREA        ║    ║               ║    ║               ║              │
-    │   ╚═══════════════╝    ╚═══════════════╝    ╚═══════════════╝              │
+    │   ╔═══════════════╗    ╔═══════════════╗    ╔═══════════════╗               │
+    │   ║   MINIMAL     ║    ║  BULLETPROOF  ║    ║   BEAUTIFUL   ║               │
+    │   ║   SURFACE     ║    ║  RELIABILITY  ║    ║   IN CODE     ║               │
+    │   ║   AREA        ║    ║               ║    ║               ║               │
+    │   ╚═══════════════╝    ╚═══════════════╝    ╚═══════════════╝               │
     │          │                    │                    │                        │
     │          ▼                    ▼                    ▼                        │
-    │   No feature bloat     Every error path      If it's not                   │
+    │   No feature bloat     Every error path      If it's not                    │
     │   Every API call       is handled            readable, it's                 │
-    │   justified            Lock-free is not      not maintainable              │
-    │                        lockless              Comments explain              │
-    │                                               *why*, not *what*            │
+    │   justified            Lock-free is not      not maintainable               │
+    │                        lockless              Comments explain               │
+    │                                               *why*, not *what*             │
     │                                                                             │
     │                       ╔═══════════════════════════╗                         │
     │                       ║   PERFORMANCE WHERE       ║                         │
@@ -75,7 +75,7 @@ This is a technical project; keep discussions technical. We evaluate code, not p
 
 ```bash
 # Clone your fork
-git clone https://github.com/YOUR_USERNAME/pseudoscopic.git
+git clone https://github.com/magneato/pseudoscopic.git
 cd pseudoscopic
 
 # Install the tools of the trade
@@ -290,7 +290,7 @@ sudo ./tools/ps-test --all
 3. **Test thoroughly** on whatever hardware you have
 4. **Submit PR** against `develop`
 5. **Respond to review** — We may ask for changes
-6. **Celebrate** when merged
+6. **Celebrate** when merged (or not, HM thank you very much)
 
 ---
 
