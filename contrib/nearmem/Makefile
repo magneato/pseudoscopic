@@ -71,6 +71,13 @@ EXAMPLE_SRCS := examples/log_analyzer.c examples/kv_cache_tier.c examples/tiled_
                 examples/tiled_matmul.c examples/tiletrace.c examples/gpucpu_demo.c \
                 examples/gpufpga_demo.c examples/abyssal_demo.c
 
+OMEGA_SRCS := src/omega.c src/omega_geometry.c src/omega_spline.c src/omega_qxor.c \
+             src/omega_sitton.c src/omega_entropy.c src/omega_vram.c src/omega_validate.c \
+             src/omega_hashbelt.c
+OMEGA_OBJS := $(OMEGA_SRCS:.c=.o)
+OMEGA_CUDA_SRCS := src/omega_kernels.cu
+OMEGA_CUDA_OBJS := $(OMEGA_CUDA_SRCS:.cu=.o)
+
 # Object files
 LIB_OBJS := $(LIB_SRCS:.c=.o)
 CUDA_OBJS := $(CUDA_SRCS:.cu=.o)
@@ -85,9 +92,9 @@ EXAMPLES := log_analyzer kv_cache_tier tiled_convolution tiled_matmul tiletrace 
 #==============================================================================
 # TARGETS
 #==============================================================================
-.PHONY: all lib examples clean install cuda-info
+.PHONY: all lib examples clean install cuda-info omega
 
-all: lib examples
+all: lib examples omega
 
 lib: $(LIB_STATIC) $(LIB_SHARED)
 
@@ -165,6 +172,9 @@ gpufpga_demo: examples/gpufpga_demo.o $(LIB_STATIC)
 
 abyssal_demo: examples/abyssal_demo.o $(LIB_STATIC)
 	$(CC) -o $@ $< -L. -lnearmem $(LDFLAGS)
+
+omega: $(OMEGA_OBJS) $(OMEGA_CUDA_OBJS) $(LIB_STATIC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lcudart -lm
 
 #==============================================================================
 # INSTALL / CLEAN

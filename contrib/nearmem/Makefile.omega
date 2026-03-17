@@ -1,0 +1,43 @@
+# ═══════════════════════════════════════════════════════════════
+# OMEGA additions to contrib/nearmem/Makefile
+# Append this to the existing Makefile or replace the omega section
+# ═══════════════════════════════════════════════════════════════
+
+# ── NASM ─────────────────────────────────────────────────────
+NASM := nasm
+NASMFLAGS := -f elf64
+
+# ── OMEGA Sources ────────────────────────────────────────────
+OMEGA_SRCS := src/omega.c src/omega_geometry.c src/omega_spline.c \
+              src/omega_qxor.c src/omega_sitton.c src/omega_entropy.c \
+              src/omega_vram.c src/omega_validate.c src/omega_hashbelt.c
+OMEGA_OBJS := $(OMEGA_SRCS:.c=.o)
+OMEGA_CUDA_SRCS := src/omega_kernels.cu
+OMEGA_CUDA_OBJS := $(OMEGA_CUDA_SRCS:.cu=.o)
+OMEGA_ASM_SRCS := asm/xor_cascade.asm
+OMEGA_ASM_OBJS := $(OMEGA_ASM_SRCS:.asm=.o)
+
+# ── OMEGA Build Rules ────────────────────────────────────────
+
+asm/%.o: asm/%.asm
+	$(NASM) $(NASMFLAGS) -o $@ $<
+
+$(OMEGA_OBJS): %.o: %.c
+	$(CC) $(CFLAGS) -I./src -c $< -o $@
+
+omega: $(OMEGA_OBJS) $(OMEGA_ASM_OBJS) $(OMEGA_CUDA_OBJS) $(LIB_STATIC)
+	$(CC) $(CFLAGS) -o $@ $(OMEGA_OBJS) $(OMEGA_ASM_OBJS) $(OMEGA_CUDA_OBJS) \
+		-L. -lnearmem $(LDFLAGS) -lm -lpthread
+
+omega_example: examples/omega_example.o $(OMEGA_OBJS) $(OMEGA_ASM_OBJS) $(LIB_STATIC)
+	$(CC) $(CFLAGS) -o $@ $< $(OMEGA_OBJS) $(OMEGA_ASM_OBJS) \
+		-L. -lnearmem $(LDFLAGS) -lm -lpthread
+
+examples/omega_example.o: examples/omega_example.c
+	$(CC) $(CFLAGS) -I./src -c $< -o $@
+
+.PHONY: omega-clean
+omega-clean:
+	rm -f $(OMEGA_OBJS) $(OMEGA_ASM_OBJS) $(OMEGA_CUDA_OBJS)
+	rm -f omega omega_example examples/omega_example.o
+
